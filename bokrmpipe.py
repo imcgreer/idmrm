@@ -22,8 +22,14 @@ def make_obs_db(args):
 	# all Bok observations during RM nights (incl. IBRM)
 	fullObsDbFile = os.path.join('config','sdssrm-allbok.fits')
 	if not os.path.exists(fullObsDbFile) or args.redo:
-		utDirs = glob.glob(os.path.join(args.rawdir,'ut201?????'))
-		#bokobsdb.generate_log(utDirs,fullObsDbFile)
+		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201?????')))
+		print utDirs
+		try:
+			obsDb = Table.read(fullObsDbFile)
+			print 'starting with existing ',fullObsDbFile
+		except IOError:
+			obsDb = None
+		bokobsdb.generate_log(utDirs,fullObsDbFile,inTable=obsDb)
 		obsDb = Table.read(fullObsDbFile)
 		# fix problems
 		# 1. files that are missing FILTER values

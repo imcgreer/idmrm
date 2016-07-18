@@ -73,6 +73,34 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 def rmobs_meta_data(dataMap):
 	bokgnostic.obs_meta_data(dataMap,outFile='bokrmMetaData.fits')
 
+def dump_data_summary(dataMap,splitrm=False):
+	for utd in dataMap.iterUtDates():
+		files,ii = dataMap.getFiles(with_frames=True)
+		ntotal = len(ii)
+		nbiases = np.sum(dataMap.obsDb['imType'][ii] == 'zero')
+		missing = []
+		if nbiases<=3: missing.append('nobias')
+		print '%8s %7d %7d ' % (utd,ntotal,nbiases),
+		nflt = {}
+		for filt in 'gi':
+			nflats = np.sum( (dataMap.obsDb['imType'][ii] == 'flat') &
+			                 (dataMap.obsDb['filter'][ii] == filt) )
+			print '%7d ' % nflats,
+			nflt[filt] = nflats
+		isrm = np.array([n.startswith('rm') 
+		                    for n in dataMap.obsDb['objName'][ii]])
+		for filt in 'gi':
+			nsci = np.sum( (dataMap.obsDb['imType'][ii] == 'object') &
+			               (dataMap.obsDb['filter'][ii] == filt) )
+			nrm = np.sum( (dataMap.obsDb['imType'][ii] == 'object') &
+			              (dataMap.obsDb['filter'][ii] == filt) & isrm )
+			if splitrm:
+				print '%7d %7d' % (nsci,nrm),
+			else:
+				print '%7d ' % (nrm),
+			if nrm>0 and nflt[filt]<=3: missing.append('no%sflat'%filt)
+		print '  ',','.join(missing)
+
 def check_processed_data(dataMap):
 	import fitsio
 	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
@@ -152,6 +180,8 @@ if __name__=='__main__':
 	                help='reference catalog ([sdssrm]|sdss|cfht)')
 	parser.add_argument('--metadata',action='store_true',
 	                help='construct observations meta data table')
+	parser.add_argument('--datasum',action='store_true',
+	                help='output summary of available data')
 	parser.add_argument('--checkproc',action='store_true',
 	                help='check processing status of individual files')
 	args = parser.parse_args()
@@ -159,7 +189,9 @@ if __name__=='__main__':
 	dataMap = bokpl.init_data_map(args)
 	dataMap = bokpl.set_master_cals(dataMap)
 	refCat = bokrmphot.load_catalog(args.catalog)
-	if args.checkproc:
+	if args.datasum:
+		dump_data_summary(dataMap)
+	elif args.checkproc:
 		check_processed_data(dataMap)
 	elif args.metadata:
 		rmobs_meta_data(dataMap)
