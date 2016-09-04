@@ -78,3 +78,18 @@ proc:
 redo:
 	make -f Makefile.2014 XARGS="-R $(XARGS)" proc 
 
+# run the pipeline on g-band dark night to look at CCD3 gradient by only doing
+# bias subtraction (-n allows comparison of oscan vs. bias-subtracted) with no
+# flat-field correction
+
+testgradient_darknight:
+	python bokrmpipe.py -u 20140425,20140427 -b g -vvvv -s oscan,bias2d,proc1 \
+	                    --noflatcorr --nocombine -n 
+
+# checking the CCD3 gradient trend over a night where sky goes from 12K to 1K
+
+testgradient_graynight:
+	python bokrmpipe.py -u 20140415 -b g -vvvv -s oscan,bias2d,proc1 \
+	                    --noflatcorr --nocombine -n
+
+
