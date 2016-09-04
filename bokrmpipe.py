@@ -15,7 +15,7 @@ def set_rm_defaults(args):
 		args.output = os.path.join(os.environ['BOK90PRIMEOUTDIR'],
 		                           pipeVersion)
 	if args.obsdb is None:
-		args.obsdb = os.path.join('config','sdssrm-bok2014.fits')
+		args.obsdb = os.path.join('config','sdssrm-bok2014.fits.gz')
 	return args
 
 def make_obs_db(args):

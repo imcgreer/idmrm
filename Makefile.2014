@@ -1,0 +1,80 @@
+#!/usr/bin/make
+
+.PHONY: initproc badpix flats finalproc proc redo
+
+TOOLS := $(HOME)/dev/rapala/bokpipe/tools
+
+ifdef LOGFILE
+	LOGARGS := --obsdb $(LOGFILE)
+else
+	LOGARGS := --obsdb config/sdssrm-bok2014.fits.gz
+endif
+
+ifdef RAWDATA
+	DATAARGS := -r $(RAWDATA)
+endif
+
+ifdef UTDATE
+	UTARGS := -u $(UTDATE)
+endif
+
+ifndef NPROC
+	NPROC := 7
+endif
+
+ifndef VERBOSE
+	VERBOSE := -vvvv
+endif
+
+ifdef BANDS
+	BANDARGS := -b $(BANDS)
+endif
+
+INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
+            -p $(NPROC) $(VERBOSE)
+
+all: initproc badpix flats finalproc
+
+initproc:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s oscan,bias2d,flat2d --nousepixflat \
+	                    -vvv $(XARGS)
+
+# XXX copy in a master bp mask from config dir
+badpix:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s bpmask -u 20140425 -b g $(XARGS)
+
+rampcorr:
+	python bokrmpipe.py $(INITARGS) --makerampcor
+
+flats:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s proc1 --prockey TMPPROC \
+	                    --norampcorr --nobiascorr --nosavegain \
+	                    --noweightmap --tmpdirout $(XARGS)
+	python bokrmpipe.py $(INITARGS) \
+	                    --makeillumcorr \
+	                    --tmpdirin $(XARGS)
+	python bokrmpipe.py $(INITARGS) \
+	                    -s proc2 \
+	                    --nodarkskycorr --noweightmap \
+	                    --skymethod polynomial --skyorder 1 \
+	                    --tmpdirin --tmpdirout $(XARGS)
+	python bokrmpipe.py $(INITARGS) \
+	                    -s skyflat \
+	                    --tmpdirin --tmpdirout $(XARGS)
+
+finalproc:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s proc1,proc2,wcs,cat \
+	                    --norampcorr --nobiascorr $(XARGS)
+
+proc:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s oscan,proc1,proc2,wcs,cat \
+	                    --norampcorr --nobiascorr $(XARGS) 
+
+redo:
+	make -f Makefile.2014 XARGS="-R $(XARGS)" proc 
+
