@@ -7,8 +7,10 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord,match_coordinates_sky
 from astropy import units as u
+from astropy.table import Table,join
 
 from bokpipe import bokphot,bokpl,bokgnostic
+from bokpipe.bokproc import BokImStat
 import bokrmpipe
 import bokrmphot
 
@@ -37,6 +39,57 @@ def srcor(ra1,dec1,ra2,dec2,sep):
 	idx,d2d,d3c = match_coordinates_sky(c1,c2)
 	ii = np.where(d2d.arcsec < sep)[0]
 	return ii,idx[ii],d2d.arcsec[ii]
+
+def calc_sky_backgrounds(dataMap,outputFile):
+	extns = ['IM4']
+	imstat = BokImStat(extensions=extns,quickprocess=True,
+	                   stats_region='amp_central_quadrant')
+	skyvals = []
+	for utd in dataMap.iterUtDates():
+		files,ii = dataMap.getFiles(imType='object',with_frames=True)
+		if files is not None:
+			rawfiles = [ dataMap('raw')(f) for f in files ]
+			imstat.process_files(rawfiles)
+			sky = imstat.meanVals.squeeze()
+			print '%8s %4d %10.1f %10.1f %10.1f' % \
+			      (utd,len(files),sky.mean(),sky.min(),sky.max())
+			skyvals.extend([ (utd,f.split('/')[1],s) 
+			                    for f,s in zip(files,sky) ])
+		imstat.reset()
+	tab = Table(rows=skyvals,names=('utDate','fileName','skyMean'))
+	tab.write(outputFile)
+
+def id_sky_frames(obsDb,skytab,utds,thresh=10000.):
+	frametab = obsDb['frameIndex','utDate','fileName','objName'].copy()
+	ii = np.where(np.in1d(frametab['utDate'],utds))[0]
+	skytab = join(skytab,frametab[ii],'fileName')
+	assert np.all(skytab['utDate_1']==skytab['utDate_2'])
+	del skytab['utDate_2']
+	skytab.rename_column('utDate_1','utDate')
+	# first cut the repeated pointings
+	ii = np.where((skytab['objName'][:-1]==skytab['objName'][1:]) & 
+	              (skytab['utDate'][:-1]==skytab['utDate'][1:]))[0]
+	skytab.remove_rows(1+ii)
+	# then cut on the sky threshold
+	ii = np.where(skytab['skyMean'] < thresh)[0]
+	skytab = skytab[ii]
+	return skytab
+
+def id_sky_frames_2014():
+	obsDb = bokpl._load_obsdb('config/sdssrm-bok2014.fits.gz')
+	darkNights = {
+	  'g':['20140126','20140128','20140312','20140424','20140426',
+	       '20140427','20140518','20140630','20140702','20140718'],
+	  'i':['20140123','20140126','20140129','20140425','20140428',
+	       '20140701','20140717'],
+	}
+	for filt in 'gi':
+		skytab = Table.read('data/bokrm2014sky%s.fits.gz'%filt)
+		skyframes = id_sky_frames(obsDb,skytab,darkNights[filt],
+		                          thresh={'g':1500.,'i':5000.}[filt])
+		outf = 'config/bokrm2014_darksky_%s.txt' % filt
+		skyframes['skyMean'].format = '{:8.1f}'
+		skyframes['utDate','fileName','skyMean'].write(outf,format='ascii')
 
 def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 	imFits = fits.open(imgFile)
@@ -184,6 +237,8 @@ if __name__=='__main__':
 	                help='output summary of available data')
 	parser.add_argument('--checkproc',action='store_true',
 	                help='check processing status of individual files')
+	parser.add_argument('--calcsky',type=str,
+	                help='calculate sky backgrounds')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -193,6 +248,8 @@ if __name__=='__main__':
 		dump_data_summary(dataMap)
 	elif args.checkproc:
 		check_processed_data(dataMap)
+	elif args.calcsky:
+		calc_sky_backgrounds(dataMap,args.calcsky)
 	elif args.metadata:
 		rmobs_meta_data(dataMap)
 
