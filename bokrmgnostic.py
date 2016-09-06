@@ -3,6 +3,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import ticker
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord,match_coordinates_sky
@@ -10,28 +11,30 @@ from astropy import units as u
 from astropy.table import Table,join
 
 from bokpipe import bokphot,bokpl,bokgnostic
-from bokpipe.bokproc import BokImStat
+from bokpipe.bokproc import ampOrder,BokImStat
 import bokrmpipe
 import bokrmphot
 
 def plot_gain_vals(diagfile):
 	g = np.load(diagfile)#,gains=gainCorV,skys=skyV,gainCor=gainCor)
-	plt.figure(figsize=(9,6))
+	plt.figure(figsize=(12,8))
 	plt.subplots_adjust(0.07,0.04,0.97,0.97,0.25,0.05)
 	for amp in range(16):
 		ax = plt.subplot(4,4,amp+1)
-		plt.plot(g['gains'][:,0,amp],c='b')
-		plt.axhline(g['gainCor'][0,amp],c='purple',ls='--')
-		plt.plot(g['gains'][:,1,amp],c='r')
-		plt.axhline(g['gainCor'][1,amp],c='orange',ls='--')
+		ax.plot(g['gains'][:,0,amp],c='b')
+		ax.axhline(g['gainCor'][0,amp],c='purple',ls='--')
+		ax.plot(g['gains'][:,1,amp],c='r')
+		ax.axhline(g['gainCor'][1,amp],c='orange',ls='--')
+		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.01))
 		ax.xaxis.set_visible(False)
-		plt.ylim(0.91,1.09)
-		ax.text(0.05,0.05,'IM%d'%bokproc.ampOrder[amp],
-		        size=8,transform=ax.transAxes)
-		ax.text(0.25,0.05,'%.3f'%g['gainCor'][0,amp],color='blue',
-		        size=8,transform=ax.transAxes)
-		ax.text(0.50,0.05,'%.3f'%g['gainCor'][1,amp],color='red',
-		        size=8,transform=ax.transAxes)
+		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
+		        size=8,va='top',transform=ax.transAxes)
+		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,amp],color='blue',
+		        size=8,va='top',transform=ax.transAxes)
+		ax.text(0.50,0.99,'%.3f'%g['gainCor'][1,amp],color='red',
+		        size=8,va='top',transform=ax.transAxes)
+		ax.set_xlim(-1,g['gains'].shape[0]+1)
+		ax.set_ylim(0.96,1.04)
 
 def srcor(ra1,dec1,ra2,dec2,sep):
 	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
