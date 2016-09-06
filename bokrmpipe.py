@@ -74,13 +74,14 @@ def make_obs_db(args):
 	rmObsDbFile = os.path.join('config','sdssrm-bok2014.fits')
 	obsDb[isrm2014].write(rmObsDbFile,overwrite=True)
 
-def load_darksky_frames(filt):
-	darkSkyFrames = np.loadtxt(os.path.join('config',
-	                                        'bokrm_darksky_%s.txt'%filt),
-	                           dtype=[('utDate','S8'),('fileName','S35'),
-	                                  ('skyVal','f4')])
-	# a quick pruning of the repeat images
-	return darkSkyFrames[::2]
+def load_darksky_frames(season,filt):
+	t = Table.read(os.path.join('config',
+	                            'bokrm%s_darksky_%s.txt'%(season,filt)),
+	               format='ascii')
+	ut = t['utDate']
+	del t['utDate']
+	t['utDate'] = ut.astype('S8')
+	return t
 
 if __name__=='__main__':
 	import sys
@@ -104,7 +105,7 @@ if __name__=='__main__':
 		# must select a band
 		if args.band is None or args.band not in ['g','i']:
 			raise ValueError("Must select a band for dark sky frames (-b)")
-		frames = load_darksky_frames(args.band)
+		frames = load_darksky_frames('2014',args.band) # XXX
 		dataMap.setFileList(frames['utDate'],frames['fileName'])
 	bokpl.run_pipe(dataMap,args)
 

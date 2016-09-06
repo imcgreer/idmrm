@@ -8,7 +8,7 @@ from astropy.stats import sigma_clip
 
 from bokpipe import bokphot,bokpl
 import bokrmpipe
-from bokrmgnostic import srcor
+#from bokrmgnostic import srcor
 
 def aperture_phot(dataMap,refCat,inputType='sky',**kwargs):
 	from astropy.table import Table,vstack
