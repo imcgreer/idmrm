@@ -36,6 +36,24 @@ def plot_gain_vals(diagfile):
 		ax.set_xlim(-1,g['gains'].shape[0]+1)
 		ax.set_ylim(0.96,1.04)
 
+def all_gain_vals(diagdir):
+	from glob import glob
+	skys,gains,gainCor,utds,filts = [],[],[],[],[]
+	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
+	for gfile in gfiles:
+		fn = os.path.basename(gfile).rstrip('.npz')
+		_,utd,filt = fn.split('_')
+		g = np.load(gfile)
+		n = g['skys'].shape[0]
+		utds.extend([utd]*n)
+		filts.extend([filt]*n)
+		skys.append(g['skys'])
+		gains.append(g['gains'])
+		gainCor.append([g['gainCor']])
+	return dict(skys=np.vstack(skys),gains=np.vstack(gains),
+	            gainCor=np.vstack(gainCor),utDate=np.array(utds),
+	            filt=np.array(filts))
+
 def srcor(ra1,dec1,ra2,dec2,sep):
 	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
 	c2 = SkyCoord(ra2,dec2,unit=(u.degree,u.degree))
