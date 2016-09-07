@@ -18,7 +18,7 @@ import bokrmphot
 def plot_gain_vals(diagfile):
 	g = np.load(diagfile)#,gains=gainCorV,skys=skyV,gainCor=gainCor)
 	plt.figure(figsize=(12,8))
-	plt.subplots_adjust(0.07,0.04,0.97,0.97,0.25,0.05)
+	plt.subplots_adjust(0.04,0.04,0.97,0.97,0.28,0.05)
 	for amp in range(16):
 		ax = plt.subplot(4,4,amp+1)
 		ax.plot(g['gains'][:,0,amp],c='b')
@@ -33,8 +33,14 @@ def plot_gain_vals(diagfile):
 		        size=8,va='top',transform=ax.transAxes)
 		ax.text(0.50,0.99,'%.3f'%g['gainCor'][1,amp],color='red',
 		        size=8,va='top',transform=ax.transAxes)
+		ax.tick_params(labelsize=8)
+		logsky = np.log10(g['skys'][:,amp])
+		rax = ax.twinx()
+		rax.plot(logsky,c='0.2',alpha=0.8,ls='-.',lw=1.5)
+		rax.tick_params(labelsize=8)
 		ax.set_xlim(-1,g['gains'].shape[0]+1)
-		ax.set_ylim(0.96,1.04)
+		ax.set_ylim(0.945,1.055)
+		rax.set_ylim(0.99*logsky.min(),1.01*logsky.max())
 
 def all_gain_vals(diagdir):
 	from glob import glob
@@ -49,10 +55,26 @@ def all_gain_vals(diagdir):
 		filts.extend([filt]*n)
 		skys.append(g['skys'])
 		gains.append(g['gains'])
-		gainCor.append([g['gainCor']])
-	return dict(skys=np.vstack(skys),gains=np.vstack(gains),
-	            gainCor=np.vstack(gainCor),utDate=np.array(utds),
-	            filt=np.array(filts))
+		gainCor.append(np.tile(g['gainCor'],(n,1,1)))
+	return Table(dict(skys=np.vstack(skys),gains=np.vstack(gains),
+	                  gainCor=np.vstack(gainCor),utDate=np.array(utds),
+	                  filt=np.array(filts)))
+
+def all_gain_plots(diagdir):
+	from glob import glob
+	from matplotlib.backends.backend_pdf import PdfPages
+	plt.ioff()
+	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
+	with PdfPages('bok_gain_vals.pdf') as pdf:
+		for gfile in gfiles:
+			print gfile
+			fn = os.path.basename(gfile).rstrip('.npz')
+			_,utd,filt = fn.split('_')
+			plot_gain_vals(gfile)
+			plt.title('%s-%s'%(utd,filt))
+			pdf.savefig()
+			plt.close()
+	plt.ion()
 
 def srcor(ra1,dec1,ra2,dec2,sep):
 	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
