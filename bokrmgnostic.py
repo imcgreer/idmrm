@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import ticker
@@ -267,6 +268,46 @@ def check_processed_data(dataMap):
 		tabf.flush()
 	tabf.write(bokgnostic.html_diag_foot)
 	tabf.close()
+
+def find_bass_cals(bassLog):
+	localpath = os.environ['BOK90PRIMERAWDIR']
+	nerscpath = os.environ['NERSC']+':'+'bok/BOK_Raw'
+	obsDb = bokpl._load_obsdb('config/sdssrm-allbok.fits')
+	dataMap = bokpl.BokDataManager(obsDb,'.','.')
+	isbassbias = bassLog['imType'] == 'zero'
+	isbassgflat = ( (bassLog['imType'] == 'flat') & 
+	                (bassLog['filter'] == 'g') )
+	isbassiflat = ( (bassLog['imType'] == 'flat') & 
+	                (bassLog['filter'] == 'i') )
+	for utd in dataMap.iterUtDates():
+		if utd.startswith('2014'): continue
+		xfer = False
+		isbassutd = bassLog['utDate'] == utd
+		files,ii = dataMap.getFiles(with_frames=True)
+		nbiases = np.sum(dataMap.obsDb['imType'][ii] == 'zero')
+		if nbiases < 10:
+			xfer |= isbassutd & isbassbias
+		ngflats = np.sum( (dataMap.obsDb['imType'][ii] == 'flat') &
+		                  (dataMap.obsDb['filter'][ii] == 'g') )
+		niflats = np.sum( (dataMap.obsDb['imType'][ii] == 'flat') &
+		                  (dataMap.obsDb['filter'][ii] == 'i') )
+		isrm = np.array([n.startswith('rm') 
+		                     for n in dataMap.obsDb['objName'][ii]])
+		ngrm = np.sum( (dataMap.obsDb['imType'][ii] == 'object') &
+		               (dataMap.obsDb['filter'][ii] == 'g') & isrm )
+		nirm = np.sum( (dataMap.obsDb['imType'][ii] == 'object') &
+		               (dataMap.obsDb['filter'][ii] == 'i') & isrm )
+		if ngflats < 10 and ngrm > 0:
+			xfer |= isbassutd & isbassgflat
+		if niflats < 10 and nirm > 0:
+			xfer |= isbassutd & isbassiflat
+		l = bassLog
+		for i in np.where(xfer)[0]:
+			cmd = ['scp',
+			  nerscpath+'/'+l['utDir'][i]+'/'+l['fileName'][i]+'.fits.fz',
+			  localpath+'/ut'+l['utDate'][i]+'/'+l['DTACQNAM'][i]+'.fz']
+			print ' '.join(cmd)
+			subprocess.call(cmd,shell=True)
 
 if __name__=='__main__':
 	import argparse
