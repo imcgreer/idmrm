@@ -51,19 +51,19 @@ rampcorr:
 flats:
 	python bokrmpipe.py $(INITARGS) \
 	                    -s proc1 --prockey TMPPROC \
-	                    --norampcorr --nobiascorr --nosavegain \
-	                    --noweightmap --tmpdirout $(XARGS)
+	                    --norampcorr --nobiascorr --nosavegain --noweightmap \
+	                    --darkskyframes --tmpdirout $(XARGS)
 	python bokrmpipe.py $(INITARGS) \
 	                    --makeillumcorr \
-	                    --tmpdirin $(XARGS)
+	                    --darkskyframes --tmpdirin $(XARGS)
 	python bokrmpipe.py $(INITARGS) \
 	                    -s proc2 \
 	                    --nodarkskycorr --noweightmap \
 	                    --skymethod polynomial --skyorder 1 \
-	                    --tmpdirin --tmpdirout $(XARGS)
+	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
 	python bokrmpipe.py $(INITARGS) \
 	                    -s skyflat \
-	                    --tmpdirin --tmpdirout $(XARGS)
+	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
 
 finalproc:
 	python bokrmpipe.py $(INITARGS) \
@@ -92,4 +92,8 @@ testgradient_graynight:
 	python bokrmpipe.py -u 20140415 -b g -vvvv -s oscan,bias2d,proc1 \
 	                    --noflatcorr --nocombine -n -o $(TESTDIR)
 
+testfringe:
+	python bokrmpipe.py $(INITARGS) \
+	                    -s fringe \
+	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
 

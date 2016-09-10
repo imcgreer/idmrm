@@ -307,7 +307,7 @@ def find_bass_cals(bassLog):
 			  nerscpath+'/'+l['utDir'][i]+'/'+l['fileName'][i]+'.fits.fz',
 			  localpath+'/ut'+l['utDate'][i]+'/'+l['DTACQNAM'][i]+'.fz']
 			print ' '.join(cmd)
-			subprocess.call(cmd,shell=True)
+			subprocess.call(cmd)
 
 if __name__=='__main__':
 	import argparse
