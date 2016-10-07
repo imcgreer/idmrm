@@ -269,9 +269,16 @@ def check_processed_data(dataMap):
 	tabf.write(bokgnostic.html_diag_foot)
 	tabf.close()
 
+# list of flats that get missed by the search below but are needed to have
+# a full set for each run
+_extra_flats = [ ('20150205','g'), ('20150210','i'), ('20150211','g'),
+                 ('20150306','i'), ('20160320','g'), ('20160320','i'),  
+                 ('20160501','g')
+]
+
 def find_bass_cals(bassLog):
 	localpath = os.environ['BOK90PRIMERAWDIR']
-	nerscpath = os.environ['NERSC']+':'+'bok/BOK_Raw'
+	nerscpath = os.environ['NERSCDTN']+':'+'bok/BOK_Raw'
 	obsDb = bokpl._load_obsdb('config/sdssrm-allbok.fits')
 	dataMap = bokpl.BokDataManager(obsDb,'.','.')
 	isbassbias = bassLog['imType'] == 'zero'
@@ -279,9 +286,9 @@ def find_bass_cals(bassLog):
 	                (bassLog['filter'] == 'g') )
 	isbassiflat = ( (bassLog['imType'] == 'flat') & 
 	                (bassLog['filter'] == 'i') )
+	xfer = False
 	for utd in dataMap.iterUtDates():
 		if utd.startswith('2014'): continue
-		xfer = False
 		isbassutd = bassLog['utDate'] == utd
 		files,ii = dataMap.getFiles(with_frames=True)
 		nbiases = np.sum(dataMap.obsDb['imType'][ii] == 'zero')
@@ -301,11 +308,19 @@ def find_bass_cals(bassLog):
 			xfer |= isbassutd & isbassgflat
 		if niflats < 10 and nirm > 0:
 			xfer |= isbassutd & isbassiflat
-		l = bassLog
-		for i in np.where(xfer)[0]:
-			cmd = ['scp',
-			  nerscpath+'/'+l['utDir'][i]+'/'+l['fileName'][i]+'.fits.fz',
-			  localpath+'/ut'+l['utDate'][i]+'/'+l['DTACQNAM'][i]+'.fz']
+	for utd,b in _extra_flats:
+		xfer |= ( (bassLog['utDate'] == utd) & 
+		          (bassLog['imType'] == 'flat') & 
+		          (bassLog['filter'] == b) )
+	l = bassLog
+	for i in np.where(xfer)[0]:
+		remotef = nerscpath+'/'+l['utDir'][i]+'/'+l['fileName'][i]+'.fits.fz'
+		localdir = localpath+'/ut'+l['utDate'][i]
+		if not os.path.exists(localdir):
+			os.mkdir(localdir)
+		localf = localdir+'/'+l['DTACQNAM'][i]+'.fz'
+		if not os.path.exists(localf):
+			cmd = ['scp',remotef,localf]
 			print ' '.join(cmd)
 			subprocess.call(cmd)
 
@@ -326,7 +341,6 @@ if __name__=='__main__':
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	dataMap = bokpl.set_master_cals(dataMap)
 	refCat = bokrmphot.load_catalog(args.catalog)
 	if args.datasum:
 		dump_data_summary(dataMap)
