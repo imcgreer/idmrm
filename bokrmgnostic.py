@@ -324,6 +324,52 @@ def find_bass_cals(bassLog):
 			print ' '.join(cmd)
 			subprocess.call(cmd)
 
+def check_bias_ramp(dataMap):
+	dataMap.setUtDates(['20140123','20140415','20140427'])
+	dataMap.setFilters('g')
+	rdxdir = dataMap.getProcDir()
+	tmpdir = dataMap.getTmpDir()
+	ii = np.arange(2016)
+	rampFits = fits.open(os.path.join(dataMap.getCalDir(),'BiasRamp.fits'))
+	biasMap = dataMap.getCalMap('bias')
+	for utd in dataMap.iterUtDates():
+		if utd != '20140415': continue
+		files = dataMap.getFiles(imType='object')
+		biasMap.setTarget(files[0])
+		n = len(files) // 4
+		grps = [files[i:i+n] for i in range(0,len(files),n)]
+		for grp in grps:
+			plt.figure(figsize=(12,5))
+			ax1 = plt.subplot(211)
+			ax2 = plt.subplot(212)
+			for extn in ['IM9']:
+				v1,v2 = [],[]
+				for f in grp:
+					im_pre = fits.getdata(os.path.join(rdxdir,f+'.fits'),extn)
+					im_cor = fits.getdata(os.path.join(tmpdir,f+'.fits'),extn)
+					sky_pre = np.median(im_pre[1024:1042,1024:1042])
+					sky_cor = np.median(im_cor[1024:1042,1024:1042])
+					print f,sky_pre,sky_cor
+					ax1.plot(im_pre[ii,ii]-sky_pre,c='0.6',alpha=0.5,lw=0.5)
+					ax2.plot(im_cor[ii,ii]-sky_cor,c='0.6',alpha=0.5,lw=0.5)
+					v1.append(im_pre[ii,ii]-sky_pre)
+					v2.append(im_cor[ii,ii]-sky_cor)
+				v1 = np.median(v1,axis=0)
+				v2 = np.median(v2,axis=0)
+				ramp = rampFits[extn].data
+				bias = biasMap.getImage(extn)
+				ax1.plot(v1,c='k',lw=0.5)
+				ax2.plot(v2,c='k',lw=0.5)
+				ax1.plot(ramp[ii,ii],c='r',lw=1.0)
+				ax1.plot(bias[ii,ii],c='orange',lw=1.0)
+				for ax in [ax1,ax2]:
+					ax.axhline(0,c='DarkCyan',ls='--',lw=1.5)
+					ax.set_xlim(0,2016)
+					ax.set_ylim(-150,150)
+			#break
+		break
+	plt.show()
+
 if __name__=='__main__':
 	import argparse
 	parser = argparse.ArgumentParser()
@@ -338,6 +384,8 @@ if __name__=='__main__':
 	                help='check processing status of individual files')
 	parser.add_argument('--calcsky',type=str,
 	                help='calculate sky backgrounds')
+	parser.add_argument('--checkramp',action='store_true',
+	                help='check bias ramp')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -350,4 +398,6 @@ if __name__=='__main__':
 		calc_sky_backgrounds(dataMap,args.calcsky)
 	elif args.metadata:
 		rmobs_meta_data(dataMap)
+	elif args.checkramp:
+		check_bias_ramp(dataMap)
 

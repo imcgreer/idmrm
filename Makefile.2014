@@ -137,6 +137,13 @@ testgradient_graynight:
 	python bokrmpipe.py -u 20140415 -b g -vvvv -s oscan,bias2d,proc1 \
 	                    --noflatcorr --nocombine -n -o $(TESTDIR)
 
+testgradient_forgnostic:
+	python bokrmpipe.py --obsdb config/sdssrm-bok2014.fits \
+	                    -u 20140123,20140415,20140427 -b g -vvvv -s proc1 \
+	                    --rampcorr --noflatcorr \
+	                    --nogainmul --nocombine --nosavegain \
+	                    --noweightmap --tmpdirout -R
+
 testfringe:
 	python bokrmpipe.py $(INITARGS) \
 	                    -s fringe \

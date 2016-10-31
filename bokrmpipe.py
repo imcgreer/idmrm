@@ -9,12 +9,12 @@ from bokpipe.badpixels import build_mask_from_flat
 from bokpipe import bokpl,bokobsdb
 from bokpipe import __version__ as pipeVersion
 
-def set_rm_defaults(args):
+def set_rm_defaults(args,version=pipeVersion):
 	if args.rawdir is None:
 		args.rawdir = os.environ['BOK90PRIMERAWDIR']
 	if args.output is None:
 		args.output = os.path.join(os.environ['BOK90PRIMEOUTDIR'],
-		                           pipeVersion)
+		                           version)
 	if args.obsdb is None:
 		args.obsdb = os.path.join('config','sdssrm-bok2014.fits.gz')
 	return args
@@ -100,8 +100,10 @@ if __name__=='__main__':
 	                help='make the observations database')
 	parser.add_argument('--makebpmask',type=str,
 	                help='make quick badpix mask from flat <FILENAME>')
+	parser.add_argument('--plver',type=str,default=pipeVersion,
+	                help='pipeline version (default is current)')
 	args = parser.parse_args()
-	args = set_rm_defaults(args)
+	args = set_rm_defaults(args,args.plver)
 	if args.makeobsdb:
 		# this needs to go here
 		make_obs_db(args)
