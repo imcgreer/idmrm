@@ -10,69 +10,90 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord,match_coordinates_sky
 from astropy import units as u
 from astropy.table import Table,join
+from astropy.stats import sigma_clip
 
 from bokpipe import bokphot,bokpl,bokgnostic
 from bokpipe.bokproc import ampOrder,BokImStat
 import bokrmpipe
 import bokrmphot
 
-def plot_gain_vals(diagfile):
-	g = np.load(diagfile)#,gains=gainCorV,skys=skyV,gainCor=gainCor)
+def plot_gain_vals(g):
 	plt.figure(figsize=(12,8))
-	plt.subplots_adjust(0.04,0.04,0.97,0.97,0.28,0.05)
-	for amp in range(16):
-		ax = plt.subplot(4,4,amp+1)
-		ax.plot(g['gains'][:,0,amp],c='b')
-		ax.axhline(g['gainCor'][0,amp],c='purple',ls='--')
+	plt.subplots_adjust(0.04,0.02,0.97,0.99,0.28,0.05)
+	axs = []
+	for ccd in range(4):
+		amp = 4*ccd
+		ax = plt.subplot(5,4,ccd+1)
 		ax.plot(g['gains'][:,1,amp],c='r')
-		ax.axhline(g['gainCor'][1,amp],c='orange',ls='--')
-		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.01))
-		ax.xaxis.set_visible(False)
+		ax.axhline(g['gainCor'][0,1,amp],c='orange',ls='--')
+		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
+		        size=8,va='top',transform=ax.transAxes)
+		ax.text(0.50,0.99,'%.3f'%g['gainCor'][0,1,amp],color='red',
+		        size=8,va='top',transform=ax.transAxes)
+		ax.set_ylim(g['gainCor'][0,1,amp]-0.025,g['gainCor'][0,1,amp]+0.025)
+		axs.append(ax)
+	for amp in range(16):
+		ax = plt.subplot(5,4,4+amp+1)
+		ax.plot(g['gains'][:,0,amp],c='b')
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,amp],color='blue',
+		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,0,amp],color='blue',
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.50,0.99,'%.3f'%g['gainCor'][1,amp],color='red',
-		        size=8,va='top',transform=ax.transAxes)
-		ax.tick_params(labelsize=8)
+		ax.axhline(g['gainCor'][0,0,amp],c='purple',ls='--')
+		ax.set_ylim(g['gainCor'][0,0,amp]-0.025,g['gainCor'][0,0,amp]+0.025)
+		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
 		rax = ax.twinx()
 		rax.plot(logsky,c='0.2',alpha=0.8,ls='-.',lw=1.5)
 		rax.tick_params(labelsize=8)
-		ax.set_xlim(-1,g['gains'].shape[0]+1)
-		ax.set_ylim(0.945,1.055)
 		rax.set_ylim(0.99*logsky.min(),1.01*logsky.max())
+	for ax in axs:
+		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.01))
+		ax.xaxis.set_visible(False)
+		ax.tick_params(labelsize=8)
+		ax.set_xlim(-1,g['gains'].shape[0]+1)
+		#ax.set_ylim(0.945,1.055)
 
-def all_gain_vals(diagdir):
+def all_gain_vals(diagdir,obsDb=None):
 	from glob import glob
-	skys,gains,gainCor,utds,filts = [],[],[],[],[]
+	if obsDb is None:
+		obsDb = Table.read('config/sdssrm-bok.fits')
+	obsDb = obsDb.group_by(['utDate','filter'])
+	skys,gains,gainCor,utds,filts,files = [],[],[],[],[],[]
 	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
 	for gfile in gfiles:
 		fn = os.path.basename(gfile).rstrip('.npz')
 		_,utd,filt = fn.split('_')
+		k = np.where((obsDb.groups.keys['utDate']==utd) &
+		             (obsDb.groups.keys['filter']==filt))[0]
 		g = np.load(gfile)
 		n = g['skys'].shape[0]
 		utds.extend([utd]*n)
 		filts.extend([filt]*n)
-		skys.append(g['skys'])
-		gains.append(g['gains'])
+		gn = sigma_clip(g['gains'],iters=2,sigma=2.0,axis=0)
+		gains.append(gn)
+		skys.append(np.ma.array(g['skys'],mask=gn.mask[:,0]))
 		gainCor.append(np.tile(g['gainCor'],(n,1,1)))
-	return Table(dict(skys=np.vstack(skys),gains=np.vstack(gains),
+#		jj = np.where(obsDb.groups[k]['imType']=='object')[0]
+#		if len(jj)!=g['skys'].shape[0]:
+#			import pdb; pdb.set_trace()
+#		assert len(jj)==g['skys'].shape[0]
+#		files.append(obsDb.groups[k]['fileName'][jj])
+	return Table(dict(skys=np.ma.vstack(skys),gains=np.ma.vstack(gains),
 	                  gainCor=np.vstack(gainCor),utDate=np.array(utds),
-	                  filt=np.array(filts)))
+	                  filt=np.array(filts)),masked=True)
 
-def all_gain_plots(diagdir):
-	from glob import glob
+def all_gain_plots(gainDat=None,diagdir=None,pdfFile='bok_gain_vals.pdf'):
+#	from glob import glob
 	from matplotlib.backends.backend_pdf import PdfPages
 	plt.ioff()
-	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
-	with PdfPages('bok_gain_vals.pdf') as pdf:
-		for gfile in gfiles:
-			print gfile
-			fn = os.path.basename(gfile).rstrip('.npz')
-			_,utd,filt = fn.split('_')
-			plot_gain_vals(gfile)
-			plt.title('%s-%s'%(utd,filt))
+	if gainDat is None:
+		gainDat = all_gain_vals(diagdir)
+	gainDat = gainDat.group_by(['utDate','filt'])
+	with PdfPages(pdfFile) as pdf:
+		for kdat,gdat in zip(gainDat.groups.keys,gainDat.groups):
+			plot_gain_vals(gdat)
+			plt.title('%s-%s'%(kdat['utDate'],kdat['filt']))
 			pdf.savefig()
 			plt.close()
 	plt.ion()
