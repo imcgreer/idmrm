@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-import os
+import os,sys
 import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import ticker
+from scipy.interpolate import LSQUnivariateSpline
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord,match_coordinates_sky
@@ -17,30 +18,45 @@ from bokpipe.bokproc import ampOrder,BokImStat
 import bokrmpipe
 import bokrmphot
 
-def plot_gain_vals(g):
+def plot_gain_vals(g,splinepars=None):
 	plt.figure(figsize=(12,8))
 	plt.subplots_adjust(0.04,0.02,0.97,0.99,0.28,0.05)
+	if g['gains'].shape[2] == 16:
+		g['gains'] = g['gains'].swapaxes(1,2)
+		g['gainCor'] = g['gainCor'].swapaxes(1,2)
+	gains = np.ma.array(g['gains'],mask=g['gains']==0)
 	axs = []
 	for ccd in range(4):
 		amp = 4*ccd
 		ax = plt.subplot(5,4,ccd+1)
-		ax.plot(g['gains'][:,1,amp],c='r')
-		ax.axhline(g['gainCor'][0,1,amp],c='orange',ls='--')
+		ax.plot(gains[:,amp,1],'rs-',ms=2,mfc='none',mec='r')
+		#ax.axhline(g['gainCor'][0,amp,1],c='orange',ls='--')
+		ax.plot(g['gainCor'][:,amp,1],c='orange',ls='--',lw=1.4)
 		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.50,0.99,'%.3f'%g['gainCor'][0,1,amp],color='red',
+		ax.text(0.50,0.99,'%.3f'%g['gainCor'][0,amp,1],color='red',
 		        size=8,va='top',transform=ax.transAxes)
-		ax.set_ylim(g['gainCor'][0,1,amp]-0.025,g['gainCor'][0,1,amp]+0.025)
+		ax.set_ylim(g['gainCor'][0,amp,1]-0.025,g['gainCor'][0,amp,1]+0.025)
 		axs.append(ax)
 	for amp in range(16):
 		ax = plt.subplot(5,4,4+amp+1)
-		ax.plot(g['gains'][:,0,amp],c='b')
+		ax.plot(gains[:,amp,0],'bs-',ms=2,mfc='none',mec='b')
+		if splinepars is not None:
+			nimg = gains.shape[0]
+			xx = np.arange(nimg)
+			knots = np.linspace(0,gains.shape[0],splinepars['nknots'])[1:-1]
+			ii = np.where(~gains[:,amp,0].mask)[0]
+			spfit = LSQUnivariateSpline(xx[ii],gains[ii,amp,0].filled(),
+			                            knots,bbox=[0,nimg],
+			                            k=splinepars['order'])
+			ax.plot(xx,spfit(xx),c='r')
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,0,amp],color='blue',
+		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,amp,0],color='blue',
 		        size=8,va='top',transform=ax.transAxes)
-		ax.axhline(g['gainCor'][0,0,amp],c='purple',ls='--')
-		ax.set_ylim(g['gainCor'][0,0,amp]-0.025,g['gainCor'][0,0,amp]+0.025)
+		#ax.axhline(g['gainCor'][0,amp,0],c='purple',ls='--')
+		ax.plot(g['gainCor'][:,amp,0],c='purple',ls='--',lw=1.4)
+		ax.set_ylim(g['gainCor'][0,amp,0]-0.025,g['gainCor'][0,amp,0]+0.025)
 		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
 		rax = ax.twinx()
@@ -70,7 +86,8 @@ def all_gain_vals(diagdir,obsDb=None):
 		n = g['skys'].shape[0]
 		utds.extend([utd]*n)
 		filts.extend([filt]*n)
-		gn = sigma_clip(g['gains'],iters=2,sigma=2.0,axis=0)
+		gn = np.ma.array(g['gains'],mask=g['gains']==0)
+		gn = sigma_clip(gn,iters=2,sigma=2.0,axis=0)
 		gains.append(gn)
 		skys.append(np.ma.array(g['skys'],mask=gn.mask[:,0]))
 		gainCor.append(np.tile(g['gainCor'],(n,1,1)))
@@ -391,12 +408,88 @@ def check_bias_ramp(dataMap):
 		break
 	plt.show()
 
+def image_thumbnails(dataMap,catFile):
+	from astropy.nddata import Cutout2D
+	from astropy.visualization import ZScaleInterval
+	from matplotlib.backends.backend_pdf import PdfPages
+	objs = Table.read(catFile)
+	objs['frameIndex'] = objs['frameId']
+	objs = join(objs,dataMap.obsDb,'frameIndex')
+	objs = objs.group_by('objId')
+	datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.1'
+	nrows,ncols = 8,6
+	figsize = (7.0,10.25)
+	subplots = (0.11,0.07,0.89,0.93,0.00,0.03)
+	size = 65
+	zscl = ZScaleInterval()
+	nplot = nrows*ncols
+	outdir = 'bokcutouts/'
+	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
+	plt.ioff()
+	for obj in objs.groups:
+		pdffile = outdir+'bokrm%03d_g.pdf'%obj['objId'][0]
+		if os.path.exists(pdffile):
+			continue
+		pdf = PdfPages(pdffile)
+		pnum = -1
+		for i,obs in enumerate(obj):
+			sys.stdout.write('\rRM%03d %4d/%4d' % 
+			                 (obs['objId'],(i+1),len(obj)))
+			sys.stdout.flush()
+			fn = os.path.join(datadir,obs['utDir'],obs['fileName']+'.fits')
+			ccdNum = obs['ccdNum']
+			im = fits.getdata(fn,'CCD%d'%ccdNum)
+			cutobj = Cutout2D(im,(obs['x'],obs['y']),size,mode='partial',
+			                  fill_value=0)
+			z1,z2 = zscl.get_limits(im)
+			cut = cutobj.data
+			# rotate to N through E
+			if ccdNum==1:
+				cut = cut[:,::-1]
+			elif ccdNum==2:
+				cut = cut[::-1,::-1]
+			elif ccdNum==3:
+				pass
+			elif ccdNum==4:
+				cut = cut[::-1,:]
+			#
+			if pnum==nplot+1 or pnum==-1:
+				if pnum != -1:
+					pdf.savefig()
+					plt.close()
+				plt.figure(figsize=figsize)
+				plt.subplots_adjust(*subplots)
+				pnum = 1
+			ax = plt.subplot(nrows,ncols,pnum)
+			plt.imshow(cut,origin='lower',interpolation='nearest',
+			           vmin=z1,vmax=z2,cmap=plt.cm.gray_r,aspect='equal')
+			framestr = '(%d,%d) [%d,%d]' % (obs['x'],obs['y'],
+			                                obs['ccdNum'],obs['frameId'])
+			utstr = obs['utDate'][2:]+' '+obs['utObs'][:5]
+			frameclr = ccdcolors[obs['ccdNum']-1]
+			ax.set_title(utstr,size=7,color='k',weight='bold')
+			t = ax.text(0.01,0.98,framestr,
+			            size=7,va='top',color=frameclr,
+			            transform=ax.transAxes)
+			t.set_bbox(dict(color='white',alpha=0.45,boxstyle="square,pad=0"))
+			ax.xaxis.set_visible(False)
+			ax.yaxis.set_visible(False)
+			pnum += 1
+		if pnum != nplot+1:
+			pdf.savefig()
+			plt.close()
+		pdf.close()
+	plt.ion()
+	print
+
 if __name__=='__main__':
 	import argparse
 	parser = argparse.ArgumentParser()
 	parser = bokpl.init_file_args(parser)
-	parser.add_argument('--catalog',type=str,default='sdssrm',
+	parser.add_argument('--refcatalog',type=str,default='sdssrm',
 	                help='reference catalog ([sdssrm]|sdss|cfht)')
+	parser.add_argument('--catalog',type=str,
+	                help='object catalog (filename)')
 	parser.add_argument('--metadata',action='store_true',
 	                help='construct observations meta data table')
 	parser.add_argument('--datasum',action='store_true',
@@ -407,10 +500,12 @@ if __name__=='__main__':
 	                help='calculate sky backgrounds')
 	parser.add_argument('--checkramp',action='store_true',
 	                help='check bias ramp')
+	parser.add_argument('--thumbnails',action='store_true',
+	                help='make image thumbnails from object catalog')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	refCat = bokrmphot.load_catalog(args.catalog)
+	refCat = bokrmphot.load_catalog(args.refcatalog)
 	if args.datasum:
 		dump_data_summary(dataMap)
 	elif args.checkproc:
@@ -421,4 +516,6 @@ if __name__=='__main__':
 		rmobs_meta_data(dataMap)
 	elif args.checkramp:
 		check_bias_ramp(dataMap)
+	elif args.thumbnails:
+		image_thumbnails(dataMap,args.catalog)
 
