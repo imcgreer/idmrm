@@ -18,29 +18,38 @@ from bokpipe.bokproc import ampOrder,BokImStat
 import bokrmpipe
 import bokrmphot
 
-def plot_gain_vals(g,splinepars=None):
+def plot_gain_vals(g,raw=False,splinepars=None):
 	plt.figure(figsize=(12,8))
 	plt.subplots_adjust(0.04,0.02,0.97,0.99,0.28,0.05)
 	if g['gains'].shape[2] == 16:
 		g['gains'] = g['gains'].swapaxes(1,2)
 		g['gainCor'] = g['gainCor'].swapaxes(1,2)
-	gains = np.ma.array(g['gains'],mask=g['gains']==0)
+	if raw:
+		gains = np.dstack([g['rawAmpGain'],np.repeat(g['rawCcdGain'],4,axis=1)])
+		ampgaincor = g['ampTrend']
+		ccdgaincor = g['ccdTrend']
+	else:
+		gains = np.ma.array(g['gains'],mask=g['gains']==0)
+		ampgaincor = g['gainCor'][:,:,0]
+		ccdgaincor = g['gainCor'][:,:,1]
 	axs = []
 	for ccd in range(4):
 		amp = 4*ccd
 		ax = plt.subplot(5,4,ccd+1)
-		ax.plot(gains[:,amp,1],'rs-',ms=2,mfc='none',mec='r')
-		#ax.axhline(g['gainCor'][0,amp,1],c='orange',ls='--')
-		ax.plot(g['gainCor'][:,amp,1],c='orange',ls='--',lw=1.4)
+		ax.plot(gains[:,amp,1],'rs',ms=2.5,mfc='none',mec='r',mew=1.1)
+		ax.plot(ccdgaincor[:,ccd],c='orange',ls='-',lw=1.4)
 		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.50,0.99,'%.3f'%g['gainCor'][0,amp,1],color='red',
+		medgain = np.median(ccdgaincor[:,ccd])
+		ax.text(0.50,0.99,'%.3f'%medgain,color='red',
 		        size=8,va='top',transform=ax.transAxes)
-		ax.set_ylim(g['gainCor'][0,amp,1]-0.025,g['gainCor'][0,amp,1]+0.025)
+		ax.set_ylim(medgain-0.025,medgain+0.025)
 		axs.append(ax)
 	for amp in range(16):
-		ax = plt.subplot(5,4,4+amp+1)
-		ax.plot(gains[:,amp,0],'bs-',ms=2,mfc='none',mec='b')
+		rowNum = amp//4
+		colNum = amp%4
+		ax = plt.subplot(5,4,4+(4*colNum+rowNum)+1)
+		ax.plot(gains[:,amp,0],'bs',ms=2.5,mfc='none',mec='b',mew=1.1)
 		if splinepars is not None:
 			nimg = gains.shape[0]
 			xx = np.arange(nimg)
@@ -52,11 +61,11 @@ def plot_gain_vals(g,splinepars=None):
 			ax.plot(xx,spfit(xx),c='r')
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		ax.text(0.25,0.99,'%.3f'%g['gainCor'][0,amp,0],color='blue',
+		medgain = np.median(gains[:,amp,0])
+		ax.text(0.25,0.99,'%.3f'%medgain,color='blue',
 		        size=8,va='top',transform=ax.transAxes)
-		#ax.axhline(g['gainCor'][0,amp,0],c='purple',ls='--')
-		ax.plot(g['gainCor'][:,amp,0],c='purple',ls='--',lw=1.4)
-		ax.set_ylim(g['gainCor'][0,amp,0]-0.025,g['gainCor'][0,amp,0]+0.025)
+		ax.plot(ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
+		ax.set_ylim(medgain-0.025,medgain+0.025)
 		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
 		rax = ax.twinx()
