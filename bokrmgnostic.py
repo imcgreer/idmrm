@@ -31,7 +31,7 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 	else:
 		gains = np.ma.array(g['gains'],mask=g['gains']==0)
 		ampgaincor = g['gainCor'][:,:,0]
-		ccdgaincor = g['gainCor'][:,:,1]
+		ccdgaincor = g['gainCor'][:,::4,1]
 	axs = []
 	for ccd in range(4):
 		amp = 4*ccd
@@ -61,7 +61,7 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 			ax.plot(xx,spfit(xx),c='r')
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		medgain = np.median(gains[:,amp,0])
+		medgain = np.median(ampgaincor[:,amp])
 		ax.text(0.25,0.99,'%.3f'%medgain,color='blue',
 		        size=8,va='top',transform=ax.transAxes)
 		ax.plot(ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
@@ -437,7 +437,7 @@ def image_thumbnails(dataMap,catFile):
 	plt.ioff()
 	for obj in objs.groups:
 		pdffile = outdir+'bokrm%03d_g.pdf'%obj['objId'][0]
-		if os.path.exists(pdffile):
+		if os.path.exists(pdffile) or len(obj)==0:
 			continue
 		pdf = PdfPages(pdffile)
 		pnum = -1
