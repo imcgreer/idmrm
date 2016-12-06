@@ -417,7 +417,7 @@ def check_bias_ramp(dataMap):
 		break
 	plt.show()
 
-def image_thumbnails(dataMap,catFile):
+def image_thumbnails(dataMap,catFile,band='g',old=False):
 	from astropy.nddata import Cutout2D
 	from astropy.visualization import ZScaleInterval
 	from matplotlib.backends.backend_pdf import PdfPages
@@ -425,18 +425,26 @@ def image_thumbnails(dataMap,catFile):
 	objs['frameIndex'] = objs['frameId']
 	objs = join(objs,dataMap.obsDb,'frameIndex')
 	objs = objs.group_by('objId')
-	datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.1'
+	if old:
+		datadir = '/media/ian/stereo/data/projects/SDSS-RM/rmreduce/'
+	else:
+		datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.1'
 	nrows,ncols = 8,6
 	figsize = (7.0,10.25)
 	subplots = (0.11,0.07,0.89,0.93,0.00,0.03)
 	size = 65
 	zscl = ZScaleInterval()
 	nplot = nrows*ncols
-	outdir = 'bokcutouts/'
+	if old:
+		outdir = 'bokcutouts_old/'
+	else:
+		outdir = 'bokcutouts/'
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
 	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
 	plt.ioff()
 	for obj in objs.groups:
-		pdffile = outdir+'bokrm%03d_g.pdf'%obj['objId'][0]
+		pdffile = outdir+'bokrm%03d_%s.pdf'%(obj['objId'][0],band)
 		if os.path.exists(pdffile) or len(obj)==0:
 			continue
 		pdf = PdfPages(pdffile)
@@ -445,22 +453,29 @@ def image_thumbnails(dataMap,catFile):
 			sys.stdout.write('\rRM%03d %4d/%4d' % 
 			                 (obs['objId'],(i+1),len(obj)))
 			sys.stdout.flush()
-			fn = os.path.join(datadir,obs['utDir'],obs['fileName']+'.fits')
 			ccdNum = obs['ccdNum']
-			im = fits.getdata(fn,'CCD%d'%ccdNum)
+			if old:
+				fn = os.path.join(datadir,obs['utDir'],'ccdproc3',
+				                  obs['fileName']+'_ccd%d.fits'%ccdNum)
+				im = fits.getdata(fn)
+			else:
+				fn = os.path.join(datadir,obs['utDir'],
+				                  obs['fileName']+'.fits')
+				im = fits.getdata(fn,'CCD%d'%ccdNum)
 			cutobj = Cutout2D(im,(obs['x'],obs['y']),size,mode='partial',
 			                  fill_value=0)
 			z1,z2 = zscl.get_limits(im)
 			cut = cutobj.data
-			# rotate to N through E
-			if ccdNum==1:
-				cut = cut[:,::-1]
-			elif ccdNum==2:
-				cut = cut[::-1,::-1]
-			elif ccdNum==3:
-				pass
-			elif ccdNum==4:
-				cut = cut[::-1,:]
+			if not old:
+				# rotate to N through E
+				if ccdNum==1:
+					cut = cut[:,::-1]
+				elif ccdNum==2:
+					cut = cut[::-1,::-1]
+				elif ccdNum==3:
+					pass
+				elif ccdNum==4:
+					cut = cut[::-1,:]
 			#
 			if pnum==nplot+1 or pnum==-1:
 				if pnum != -1:
@@ -511,6 +526,8 @@ if __name__=='__main__':
 	                help='check bias ramp')
 	parser.add_argument('--thumbnails',action='store_true',
 	                help='make image thumbnails from object catalog')
+	parser.add_argument('--old',action='store_true',
+	                help='use old (09/2014) processed images')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -526,5 +543,5 @@ if __name__=='__main__':
 	elif args.checkramp:
 		check_bias_ramp(dataMap)
 	elif args.thumbnails:
-		image_thumbnails(dataMap,args.catalog)
+		image_thumbnails(dataMap,args.catalog,old=args.old)
 
