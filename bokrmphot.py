@@ -172,7 +172,9 @@ def _read_old_catf(obsDb,catf):
 
 def construct_lightcurves(dataMap,refCat,old=False):
 	if old:
-		pfx = {'sdss':'sdssbright'}[refCat['filePrefix']]
+		pfx = refCat['filePrefix']
+		# renaming
+		pfx = {'sdss':'sdssbright'}.get(pfx,pfx)
 		aperCatDir = os.environ['HOME']+'/data/projects/SDSS-RM/rmreduce/catalogs_v2b/'
 		lcFn = lambda filt: 'lightcurves_%s_%s_old.fits' % (pfx,filt)
 	else:
@@ -182,6 +184,9 @@ def construct_lightcurves(dataMap,refCat,old=False):
 	for filt in dataMap.iterFilters():
 		allTabs = []
 		for utd in dataMap.iterUtDates():
+			if old and utd=='20131223':
+				utd = '20131222'
+			print 'loading catalogs from ',utd
 			aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
 			aperCatF = os.path.join(aperCatDir,aperCatFn)
 			if os.path.exists(aperCatF):
@@ -196,25 +201,28 @@ def construct_lightcurves(dataMap,refCat,old=False):
 		tab.sort(['objId','frameId'])
 		ii = match_to(tab['frameId'],dataMap.obsDb['frameIndex'])
 		expTime = dataMap.obsDb['expTime'][ii][:,np.newaxis]
-		apDat = Table.read('zeropoints_%s.fits'%filt)
-		ii = match_to(tab['frameId'],apDat['frameId'])
-		nAper = tab['counts'].shape[-1]
-		apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
-		# cannot for the life of me figure out how to do this with indexing
-		for apNum in range(nAper):
-			apCorr[np.arange(len(ii)),apNum] = \
-			            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
-		zp = apDat['aperZp'][ii]
-		zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
-		corrCps = tab['counts'] * apCorr / expTime
-		magAB = zp - 2.5*np.ma.log10(np.ma.masked_array(corrCps,
-		                                           mask=tab['counts']<=0))
-		tab['aperMag'] = magAB.filled(99.99)
-		tab['aperMagErr'] = 1.0856*tab['countsErr']/tab['counts']
-		# convert AB mag to nanomaggie
-		fluxConv = 10**(-0.4*(zp-22.5))
-		tab['aperFlux'] = corrCps * fluxConv
-		tab['aperFluxErr'] = (tab['countsErr']/expTime) * apCorr * fluxConv
+		try:
+			apDat = Table.read('zeropoints_%s.fits'%filt)
+			ii = match_to(tab['frameId'],apDat['frameId'])
+			nAper = tab['counts'].shape[-1]
+			apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
+			# cannot for the life of me figure out how to do this with indexing
+			for apNum in range(nAper):
+				apCorr[np.arange(len(ii)),apNum] = \
+				            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
+			zp = apDat['aperZp'][ii]
+			zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
+			corrCps = tab['counts'] * apCorr / expTime
+			magAB = zp - 2.5*np.ma.log10(np.ma.masked_array(corrCps,
+			                                           mask=tab['counts']<=0))
+			tab['aperMag'] = magAB.filled(99.99)
+			tab['aperMagErr'] = 1.0856*tab['countsErr']/tab['counts']
+			# convert AB mag to nanomaggie
+			fluxConv = 10**(-0.4*(zp-22.5))
+			tab['aperFlux'] = corrCps * fluxConv
+			tab['aperFluxErr'] = (tab['countsErr']/expTime) * apCorr * fluxConv
+		except IOError:
+			pass
 		ii = match_to(tab['frameId'],dataMap.obsDb['frameIndex'])
 		tab['airmass'] = dataMap.obsDb['airmass'][ii]
 		tab['mjd'] = dataMap.obsDb['mjd'][ii]
@@ -353,7 +361,8 @@ if __name__=='__main__':
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	dataMap = bokpl.set_master_cals(dataMap)
+	dataMap.setFilters(['g','i'])
+	#dataMap = bokpl.set_master_cals(dataMap)
 	refCat = load_catalog(args.catalog)
 	if args.aperphot:
 		if args.processes == 1:
