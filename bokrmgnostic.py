@@ -306,11 +306,14 @@ def dump_data_summary(dataMap,splitrm=False):
 def check_processed_data(dataMap):
 	import fitsio
 	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
-	zeropoints = fits.getdata('zeropoints_g.fits')
+	try:
+		zeropoints = fits.getdata('zeropoints_g.fits')
+	except IOError:
+		zeropoints = None
 	tabf = open(os.path.join('proc_diag.html'),'w')
 	tabf.write(bokgnostic.html_diag_head)
 	rowstr = ''
-	files_and_frames = dataMap.getFiles(with_frames=True)
+	files_and_frames = dataMap.getFiles(imType='object',with_frames=True)
 	for f,i in zip(*files_and_frames):
 		frameId = dataMap.obsDb['frameIndex'][i]
 		rowstr = ''
@@ -335,7 +338,7 @@ def check_processed_data(dataMap):
 		try:
 			zpi = np.where(dataMap.obsDb['frameIndex'][i] ==
 			                                  zeropoints['frameId'])[0][0]
-		except IndexError:
+		except:
 			zpi = None
 		for ccdi in range(4):
 			if zpi is not None:
