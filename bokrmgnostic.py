@@ -582,6 +582,8 @@ def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
 					pass
 				elif ccdNum==4:
 					cut = cut[::-1,:]
+				# except now flip x-axis so east is right direction
+				cut = cut[:,::-1]
 			if trim is not None:
 				cut = cut[trim:-trim,trim:-trim]
 			#
