@@ -3,7 +3,7 @@
 import os
 import glob
 import numpy as np
-from astropy.table import Table,vstack
+from astropy.table import Table,vstack,join
 
 from bokpipe.badpixels import build_mask_from_flat
 from bokpipe import bokpl,bokobsdb
@@ -48,14 +48,34 @@ def make_obs_db(args):
 		bad = [ 'a%04d' % _i for _i in [1] ]
 		good[(obsDb['utDate']=='20140114') &
 		     np.in1d(obsDb['fileName'],bad)] = False
+		#       first survey image was 300s and way overexposed
+		bad = [ 'bokrm.20140114.%04d' % _i for _i in [1] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       lots of passing clouds with saturated ims this night
+		bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,144,145,146,147,
+		                                              150,152,153,158] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #173 telescope was moving
 		bad = [ 'bokrm.20140312.%04d' % _i for _i in [173] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #26 flat is truncated
-		bad = [ 'bokrm.20140319.%04d' % _i for _i in [26] ]
+		#       lots of passing clouds with saturated ims this night
+		bad = [ 'bokrm.20140313.%04d' % _i for _i in [119,121,122] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       #26 flat is truncated, passing clouds
+		bad = [ 'bokrm.20140319.%04d' % _i for _i in [26,51,52,53,54,55,
+		                                              56,57,58,59,60] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #181 telescope was moving
 		bad = [ 'bokrm.20140609.%04d' % _i for _i in [181] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       #171 telescope was moving
+		bad = [ 'bokrm.20140610.%04d' % _i for _i in [171] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       lots of passing clouds with saturated ims this night
+		bad = [ 'bokrm.20140612.%04d' % _i for _i in [88,89,90,102,103,104,
+		                                              105,107,110,111,112,
+		                                              113,114,115,119,120,
+		                                              121,122,123] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		# write the edited table
 		obsDb['good'] = good
@@ -87,6 +107,46 @@ def load_darksky_frames(season,filt):
 	del t['utDate']
 	t['utDate'] = ut.astype('S8')
 	return t
+
+class IllumFilter(object):
+	minNImg = 15
+	maxNImg = 30
+	skySigThresh = 3.0
+	maxCounts = 20000
+	def __init__(self):
+		self.sky = vstack([Table.read('data/bokrm2014skyg.fits.gz'),
+		                   Table.read('data/bokrm2014skyi.fits.gz')])
+	def __call__(self,obsDb,ii):
+		keep = np.ones(len(ii),dtype=bool)
+		# this whole night is bad due to passing clouds
+		keep[:] ^= obsDb['utDate'][ii] == '20140612'
+		# repeated images at same pointing center
+		jj = np.arange(1,len(ii),2)
+		keep[jj] ^= obsDb['objName'][ii[jj]] == obsDb['objName'][ii[jj-1]]
+		jj = np.arange(2,len(ii),2)
+		keep[jj] ^= obsDb['objName'][ii[jj]] == obsDb['objName'][ii[jj-1]]
+		# pointings swamped with bright stars
+		for field in ['rm10','rm11','rm12','rm13']:
+			keep[obsDb['objName'][ii]==field] = False
+		return keep
+		if keep.sum()==0:
+			return keep
+		# filter out bright sky values
+		t = join(obsDb[ii],self.sky,'fileName')
+		if len(t) < len(ii):
+			raise ValueError('missing files!')
+		skyMean = t['skyMean'].mean()
+		skyRms = t['skyMean'].std()
+		jj = t['skyMean'].argsort()
+		nimg = keep[jj].cumsum()
+		jlast = np.where((nimg>self.minNImg) & 
+		            ((t['skyMean'][jj] > skyMean+self.skySigThresh*skyRms) |
+		             (t['skyMean'][jj] > self.maxCounts)))[0]
+		if len(jlast) > 0:
+			keep[jj[jlast:]] = False
+		if keep.sum() > self.maxNImg:
+			keep[jj[nimg>self.maxNImg]] = False
+		return keep
 
 if __name__=='__main__':
 	import sys
@@ -123,5 +183,7 @@ if __name__=='__main__':
 		build_mask_from_flat(args.makebpmask,
 		                     dataMap.getCalMap('badpix').getFileName(),
 		                     dataMap.getCalDir())
-	bokpl.run_pipe(dataMap,args)
+	kwargs = {}
+	kwargs['illum_filter_fun'] = IllumFilter()
+	bokpl.run_pipe(dataMap,args,**kwargs)
 
