@@ -199,7 +199,7 @@ def calc_sky_backgrounds(dataMap,outputFile):
 		if files is not None:
 			rawfiles = [ dataMap('raw')(f) for f in files ]
 			imstat.process_files(rawfiles)
-			sky = imstat.meanVals.squeeze()
+			sky = imstat.meanVals[:,0]
 			print '%8s %4d %10.1f %10.1f %10.1f' % \
 			      (utd,len(files),sky.mean(),sky.min(),sky.max())
 			skyvals.extend([ (utd,f.split('/')[1],s) 
@@ -475,10 +475,8 @@ def check_bias_ramp(dataMap):
 		break
 	plt.show()
 
-def image_thumbnails(dataMap,catFile,band='g',old=False):
+def image_cutouts(dataMap,catFile,band='g',old=False):
 	from astropy.nddata import Cutout2D
-	from astropy.visualization import ZScaleInterval
-	from matplotlib.backends.backend_pdf import PdfPages
 	objs = Table.read(catFile)
 	objs['frameIndex'] = objs['frameId']
 	objs = join(objs,dataMap.obsDb,'frameIndex')
@@ -486,7 +484,53 @@ def image_thumbnails(dataMap,catFile,band='g',old=False):
 	if old:
 		datadir = '/media/ian/stereo/data/projects/SDSS-RM/rmreduce/'
 	else:
-		datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.1'
+		#datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.1'
+		datadir = '/d2/data/projects/SDSS-RM/RMpipe/bokpipe_v0.3'
+	size = 65
+	if old:
+		outdir = 'bokcutouts_old/'
+	else:
+		outdir = 'bokcutouts/'
+	if not os.path.exists(outdir):
+		os.makedirs(outdir)
+	for obj in objs.groups:
+		cutfile = outdir+'bokrm%03d_%s.fits'%(obj['objId'][0],band)
+		if os.path.exists(cutfile) or len(obj)==0:
+			continue
+		hdus = [ fits.PrimaryHDU() ]
+		for i,obs in enumerate(obj):
+			sys.stdout.write('\rRM%03d %4d/%4d' % 
+			                 (obs['objId'],(i+1),len(obj)))
+			sys.stdout.flush()
+			ccdNum = obs['ccdNum']
+			if old:
+				fn = os.path.join(datadir,obs['utDir'],'ccdproc3',
+				                  obs['fileName']+'_ccd%d.fits'%ccdNum)
+				im,hdr = fits.getdata(fn,header=True)
+				hdr0 = hdr
+			else:
+				fn = os.path.join(datadir,obs['utDir'],
+				                  obs['fileName']+'.fits')
+				im,hdr = fits.getdata(fn,'CCD%d'%ccdNum,header=True)
+				hdr0 = fits.getheader(fn,0)
+			wcs = WCS(hdr)
+			cutobj = Cutout2D(im,(obs['x'],obs['y']),size,mode='partial',
+			                  wcs=wcs,fill_value=0)
+			newhdr = cutobj.wcs.to_header()
+			newhdr['OBJECT'] = '_'.join([hdr0['DATE-OBS'],hdr0['UTC-OBS'][:5],
+			                             hdr0['OBJECT']])
+			hdus.append(fits.ImageHDU(cutobj.data,newhdr))
+		fits.HDUList(hdus).writeto(cutfile)
+
+def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
+	from astropy.visualization import ZScaleInterval
+	from matplotlib.backends.backend_pdf import PdfPages
+	# load object database
+	objs = Table.read(catFile)
+	objs['frameIndex'] = objs['frameId']
+	objs = join(objs,dataMap.obsDb,'frameIndex')
+	objs = objs.group_by('objId')
+	# configure figures
 	nrows,ncols = 8,6
 	figsize = (7.0,10.25)
 	subplots = (0.11,0.07,0.89,0.93,0.00,0.03)
@@ -497,33 +541,34 @@ def image_thumbnails(dataMap,catFile,band='g',old=False):
 		outdir = 'bokcutouts_old/'
 	else:
 		outdir = 'bokcutouts/'
-	if not os.path.exists(outdir):
-		os.makedirs(outdir)
 	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
+	if True:
+		diffphot = Table.read('bok%s_photflags.fits'%band)
+		errlog = open('bokflags_%s_err.log'%band,'w')
+		bitstr = [ 'TinyFlux','BigFlux','TinyErr','BigErr','BigOff']
 	plt.ioff()
 	for obj in objs.groups:
-		pdffile = outdir+'bokrm%03d_%s.pdf'%(obj['objId'][0],band)
+		objId = obj['objId'][0]
+		if objId >= 850:
+			break
+		cutfile = outdir+'bokrm%03d_%s.fits'%(obj['objId'][0],band)
+		pdffile = cutfile.replace('.fits','.pdf')
 		if os.path.exists(pdffile) or len(obj)==0:
 			continue
 		pdf = PdfPages(pdffile)
+		cutfits = fits.open(cutfile)
+		# number cutouts matches number observations
+		if len(cutfits)-1 != len(obj):
+			errlog.write('[RM%03d]: %d cutouts, %d obs; skipping\n' %
+			              (obj['objId'][0],len(cutfits)-1,len(obj)))
 		pnum = -1
-		for i,obs in enumerate(obj):
+		for i,(obs,hdu) in enumerate(zip(obj,cutfits[1:])):
 			sys.stdout.write('\rRM%03d %4d/%4d' % 
 			                 (obs['objId'],(i+1),len(obj)))
 			sys.stdout.flush()
 			ccdNum = obs['ccdNum']
-			if old:
-				fn = os.path.join(datadir,obs['utDir'],'ccdproc3',
-				                  obs['fileName']+'_ccd%d.fits'%ccdNum)
-				im = fits.getdata(fn)
-			else:
-				fn = os.path.join(datadir,obs['utDir'],
-				                  obs['fileName']+'.fits')
-				im = fits.getdata(fn,'CCD%d'%ccdNum)
-			cutobj = Cutout2D(im,(obs['x'],obs['y']),size,mode='partial',
-			                  fill_value=0)
-			z1,z2 = zscl.get_limits(im)
-			cut = cutobj.data
+			cut = hdu.data
+			z1,z2 = zscl.get_limits(cut[cut>0])
 			if not old:
 				# rotate to N through E
 				if ccdNum==1:
@@ -534,6 +579,8 @@ def image_thumbnails(dataMap,catFile,band='g',old=False):
 					pass
 				elif ccdNum==4:
 					cut = cut[::-1,:]
+			if trim is not None:
+				cut = cut[trim:-trim,trim:-trim]
 			#
 			if pnum==nplot+1 or pnum==-1:
 				if pnum != -1:
@@ -545,15 +592,33 @@ def image_thumbnails(dataMap,catFile,band='g',old=False):
 			ax = plt.subplot(nrows,ncols,pnum)
 			plt.imshow(cut,origin='lower',interpolation='nearest',
 			           vmin=z1,vmax=z2,cmap=plt.cm.gray_r,aspect='equal')
-			framestr = '(%d,%d) [%d,%d]' % (obs['x'],obs['y'],
-			                                obs['ccdNum'],obs['frameId'])
+			framestr1 = '(%d,%d,%d)' % (obs['ccdNum'],obs['x'],obs['y'])
+			framestr2 = '%.3f' % (obs['mjd_1'])
 			utstr = obs['utDate'][2:]+' '+obs['utObs'][:5]
 			frameclr = ccdcolors[obs['ccdNum']-1]
 			ax.set_title(utstr,size=7,color='k',weight='bold')
-			t = ax.text(0.01,0.98,framestr,
+			t = ax.text(0.01,0.98,framestr1,
 			            size=7,va='top',color=frameclr,
 			            transform=ax.transAxes)
 			t.set_bbox(dict(color='white',alpha=0.45,boxstyle="square,pad=0"))
+			t = ax.text(0.01,0.02,framestr2,
+			            size=7,color='blue',
+			            transform=ax.transAxes)
+			t.set_bbox(dict(color='white',alpha=0.45,boxstyle="square,pad=0"))
+			if True:
+				oid = obs['objId']
+				dt = diffphot['MJD'][oid]-obs['mjd_1']
+				_j = np.abs(dt).argmin()
+				flg = diffphot['FLAG'][oid,_j]
+				if np.abs(dt[_j]) > 1e-2:
+					errlog.write('no diff phot for %d %.4f\n' % 
+					             (oid,obs['mjd_1']))
+				elif flg > 0:
+					flgstr = [ s for bit,s in enumerate(bitstr)
+					               if (flg & (1<<bit)) > 0 ]
+					t = ax.text(0.97,0.8,'\n'.join(flgstr),
+					            size=10,ha='right',va='top',color='red',
+					            transform=ax.transAxes)
 			ax.xaxis.set_visible(False)
 			ax.yaxis.set_visible(False)
 			pnum += 1
@@ -562,6 +627,7 @@ def image_thumbnails(dataMap,catFile,band='g',old=False):
 			plt.close()
 		pdf.close()
 	plt.ion()
+	errlog.close()
 	print
 
 if __name__=='__main__':
@@ -582,6 +648,8 @@ if __name__=='__main__':
 	                help='calculate sky backgrounds')
 	parser.add_argument('--checkramp',action='store_true',
 	                help='check bias ramp')
+	parser.add_argument('--cutouts',action='store_true',
+	                help='make image cutouts from object catalog')
 	parser.add_argument('--thumbnails',action='store_true',
 	                help='make image thumbnails from object catalog')
 	parser.add_argument('--old',action='store_true',
@@ -600,6 +668,12 @@ if __name__=='__main__':
 		rmobs_meta_data(dataMap)
 	elif args.checkramp:
 		check_bias_ramp(dataMap)
+	elif args.cutouts:
+		if args.band is None:
+			raise ValueError("must specify filter (g or i)")
+		image_cutouts(dataMap,args.catalog,band=args.band,old=args.old)
 	elif args.thumbnails:
-		image_thumbnails(dataMap,args.catalog,old=args.old)
+		if args.band is None:
+			raise ValueError("must specify filter (g or i)")
+		image_thumbnails(dataMap,args.catalog,band=args.band,old=args.old)
 
