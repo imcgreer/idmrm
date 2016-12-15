@@ -1,6 +1,6 @@
 #!/usr/bin/make
 
-.PHONY: initproc badpix flats finalproc proc redo
+.PHONY: initproc badpix flats proc redo
 
 TOOLS := $(HOME)/dev/rapala/bokpipe/tools
 
@@ -31,14 +31,14 @@ ifdef BANDS
 endif
 
 ifndef PROCARGS
-	PROCARGS := --nousepixflat --rampcorr
+	PROCARGS := --nousepixflat --rampcorr --noweightmap
 #	PROCARGS := --nousepixflat --fixsaturation --nobiascorr # XXX 2016 data
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
             -p $(NPROC) $(VERBOSE)
 
-all: initproc badpix flats finalproc
+all: initproc badpix flats 
 
 initproc:
 	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
@@ -63,10 +63,9 @@ proc1:
 	                    -s proc1 \
 	                    -vvv $(XARGS)
 
-flats_makeillum:
+makeillum:
 	python bokrmpipe.py $(INITARGS) \
-	                    -s illum \
-	                    --darkskyframes $(XARGS)
+	                    -s illum  $(XARGS)
 
 flats_illumcorr:
 	python bokrmpipe.py $(INITARGS) \
@@ -93,29 +92,25 @@ flats_makeskyflat:
 	                    -s skyflat \
 	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
 
-#flats_proc1 \
-#       flats_makeillum flats_illumcorr \
-#
-
-flats: flats_makeillum flats_illumcorr \
+flats: flats_illumcorr \
        flats_makefringe flats_fringeskycorr \
        flats_makeskyflat
 
-finalproc:
+proc2:
 	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s proc1,proc2 \
+	                    -s proc2 \
 	                    $(XARGS)
 
 procall:
 	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s oscan,proc1,proc2 \
+	                    -s oscan,proc1,proc2 -t object \
 	                    $(XARGS)
 
 catalogs:
 	python bokrmpipe.py $(INITARGS) -s wcs,cat $(XARGS)
 
 redo:
-	make -f Makefile.2014 XARGS="-R $(XARGS) -t object" procall catalogs
+	make -f Makefile.2014 XARGS="-R $(XARGS)" procall catalogs
 
 steps:
 	python bokrmpipe.py $(INITARGS) $(PROCARGS) -s $(STEPS) $(XARGS)
@@ -136,6 +131,8 @@ testgradient_darknight:
 testgradient_graynight:
 	python bokrmpipe.py -u 20140415 -b g -vvvv -s oscan,bias2d,proc1 \
 	                    --noflatcorr --nocombine -n -o $(TESTDIR)
+
+# --frames 2635-2640 (starts at 2635 to do a subset)
 
 testgradient_forgnostic:
 	python bokrmpipe.py --obsdb config/sdssrm-bok2014.fits \
