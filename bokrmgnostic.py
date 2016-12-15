@@ -10,7 +10,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord,match_coordinates_sky
 from astropy import units as u
-from astropy.table import Table,join
+from astropy.table import Table,join,vstack
 from astropy.stats import sigma_clip
 
 from bokpipe import bokphot,bokpl,bokgnostic
@@ -18,14 +18,63 @@ from bokpipe.bokproc import ampOrder,BokImStat
 import bokrmpipe
 import bokrmphot
 
+def test_spline_fit(seqno,gains,splinepars,ax,amp):
+	nknots = splinepars.get('nknots',1) # number interior knots
+	order = splinepars.get('order',2)
+	rejiter = splinepars.get('rejiter',1)
+	rejthresh = splinepars.get('rejthresh',2.5)
+	maxedgemissing = splinepars.get('maxedgemissing',4)
+	addknots = splinepars.get('addknots',[])
+	which = 'ccd' if amp<0 else 'amp'
+	knots = np.linspace(seqno[0],seqno[-1],nknots+2)[1:-1]
+	if len(addknots)>0:
+		print 'knots before: ',knots
+		for k in addknots:
+			knots = np.insert(knots,np.searchsorted(knots,k),k)
+		print 'knots after: ',knots
+	if np.allclose(gains,1):
+		rejiter = 0
+	ii = np.where(~(gains.mask))[0]
+	spfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
+	                            knots,bbox=[seqno[0],seqno[-1]],
+	                            k=order)
+	rejmask = np.zeros(len(seqno),dtype=np.bool)
+	for iternum in range(rejiter):
+		ii = np.where(~(gains.mask|rejmask))[0]
+		res = gains[ii] - spfit(seqno[ii])
+		resrms = np.ma.std(res)
+		rejmask[ii] |= np.abs(res/resrms) > rejthresh
+		ii = np.where(~(gains.mask|rejmask))[0]
+		spfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
+		                            knots,bbox=[seqno[0],seqno[-1]],
+		                            k=order)
+	spvals = spfit(seqno)
+	if ii[0] >= maxedgemissing or ii[-1] < (len(seqno)-maxedgemissing):
+		# force it to linear fit with no interior knots
+		linspfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
+		                               [],bbox=[seqno[0],seqno[-1]],
+		                               k=1)
+		print '%s %d filling '%(which,abs(amp)),
+		if ii[0] >= maxedgemissing:
+			print 'up to ',ii[0],
+			spvals[:ii[0]] = linspfit(seqno[:ii[0]])
+		if ii[-1] < (len(seqno)-maxedgemissing):
+			spvals[ii[-1]:] = linspfit(seqno[ii[-1]:])
+			print 'past ',ii[-1],
+		print
+	ax.plot(seqno,spvals,c='g')
+	if rejmask.sum() > 0:
+		ax.scatter(seqno[rejmask],gains[rejmask],marker='x',c='0.2',s=50)
+		res = gains - spfit(seqno)
+		print '%s %d rejected '%(which,abs(amp)),
+		print seqno[rejmask],gains[rejmask],res.data[rejmask]/resrms
+
 def plot_gain_vals(g,raw=False,splinepars=None):
 	plt.figure(figsize=(12,8))
 	plt.subplots_adjust(0.04,0.02,0.97,0.99,0.28,0.05)
-	if g['gains'].shape[2] == 16:
-		g['gains'] = g['gains'].swapaxes(1,2)
-		g['gainCor'] = g['gainCor'].swapaxes(1,2)
 	if raw:
-		gains = np.dstack([g['rawAmpGain'],np.repeat(g['rawCcdGain'],4,axis=1)])
+		gains = np.ma.dstack([g['rawAmpGain'],
+		                      np.repeat(g['rawCcdGain'],4,axis=1)])
 		ampgaincor = g['ampTrend']
 		ccdgaincor = g['ccdTrend']
 	else:
@@ -33,11 +82,25 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 		ampgaincor = g['gainCor'][:,:,0]
 		ccdgaincor = g['gainCor'][:,::4,1]
 	axs = []
+	nimg = gains.shape[0]
+	seqno = np.arange(nimg,dtype=np.float32)
 	for ccd in range(4):
 		amp = 4*ccd
 		ax = plt.subplot(5,4,ccd+1)
-		ax.plot(gains[:,amp,1],'rs',ms=2.5,mfc='none',mec='r',mew=1.1)
-		ax.plot(ccdgaincor[:,ccd],c='orange',ls='-',lw=1.4)
+		for b,sym in zip('gi','so'):
+			ii = np.where(g['filter']==b)[0]
+			if len(ii)>0:
+				ampgains = gains[ii,amp,1]
+				jj = np.where(~ampgains.mask)[0]
+				ax.plot(seqno[ii[jj]],ampgains[jj],'r'+sym,
+				        ms=2.5,mfc='none',mec='r',mew=1.1)
+				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
+				if len(jj)>0:
+					ax.plot(seqno[ii[jj]].data,ampgains[jj],'rx',
+					        ms=2.5,mfc='none',mec='r',mew=1.1)
+				if splinepars is not None:
+					test_spline_fit(seqno[ii],ampgains,splinepars,ax,-(ccd+1))
+		ax.plot(seqno,ccdgaincor[:,ccd],c='orange',ls='-',lw=1.4)
 		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
 		        size=8,va='top',transform=ax.transAxes)
 		medgain = np.median(ccdgaincor[:,ccd])
@@ -49,22 +112,25 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 		rowNum = amp//4
 		colNum = amp%4
 		ax = plt.subplot(5,4,4+(4*colNum+rowNum)+1)
-		ax.plot(gains[:,amp,0],'bs',ms=2.5,mfc='none',mec='b',mew=1.1)
-		if splinepars is not None:
-			nimg = gains.shape[0]
-			xx = np.arange(nimg)
-			knots = np.linspace(0,gains.shape[0],splinepars['nknots'])[1:-1]
-			ii = np.where(~gains[:,amp,0].mask)[0]
-			spfit = LSQUnivariateSpline(xx[ii],gains[ii,amp,0].filled(),
-			                            knots,bbox=[0,nimg],
-			                            k=splinepars['order'])
-			ax.plot(xx,spfit(xx),c='r')
+		for b,sym in zip('gi','so'):
+			ii = np.where(g['filter']==b)[0]
+			if len(ii)>0:
+				ampgains = gains[ii,amp,0]
+				jj = np.where(~ampgains.mask)[0]
+				ax.plot(seqno[ii[jj]],ampgains[jj],'b'+sym,
+				        ms=2.5,mfc='none',mec='b',mew=1.1)
+				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
+				if len(jj)>0:
+					ax.plot(seqno[ii[jj]].data,ampgains[jj],'bx',
+					        ms=2.5,mfc='none',mec='b',mew=1.1)
+				if splinepars is not None:
+					test_spline_fit(seqno[ii],ampgains,splinepars,ax,amp)
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
 		medgain = np.median(ampgaincor[:,amp])
 		ax.text(0.25,0.99,'%.3f'%medgain,color='blue',
 		        size=8,va='top',transform=ax.transAxes)
-		ax.plot(ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
+		ax.plot(seqno,ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
 		ax.set_ylim(medgain-0.025,medgain+0.025)
 		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
@@ -79,47 +145,39 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 		ax.set_xlim(-1,g['gains'].shape[0]+1)
 		#ax.set_ylim(0.945,1.055)
 
+def load_gain_data(gfile,obsDb):
+	gdat = Table(dict(np.load(gfile)),masked=True) 
+	gdat.rename_column('files','fileName')
+	gdat = join(gdat,obsDb['fileName','filter','utDate'],'fileName')
+	for c in ['gains','rawAmpGain','rawCcdGain']:
+		gdat[c][gdat[c]==0] = np.ma.masked
+	return gdat
+
 def all_gain_vals(diagdir,obsDb=None):
 	from glob import glob
 	if obsDb is None:
 		obsDb = Table.read('config/sdssrm-bok.fits')
-	obsDb = obsDb.group_by(['utDate','filter'])
-	skys,gains,gainCor,utds,filts,files = [],[],[],[],[],[]
 	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
+	#return vstack([ load_gain_data(gfile,obsDb) for gfile in gfiles ])
+	tabs = []
 	for gfile in gfiles:
-		fn = os.path.basename(gfile).rstrip('.npz')
-		_,utd,filt = fn.split('_')
-		k = np.where((obsDb.groups.keys['utDate']==utd) &
-		             (obsDb.groups.keys['filter']==filt))[0]
-		g = np.load(gfile)
-		n = g['skys'].shape[0]
-		utds.extend([utd]*n)
-		filts.extend([filt]*n)
-		gn = np.ma.array(g['gains'],mask=g['gains']==0)
-		gn = sigma_clip(gn,iters=2,sigma=2.0,axis=0)
-		gains.append(gn)
-		skys.append(np.ma.array(g['skys'],mask=gn.mask[:,0]))
-		gainCor.append(np.tile(g['gainCor'],(n,1,1)))
-#		jj = np.where(obsDb.groups[k]['imType']=='object')[0]
-#		if len(jj)!=g['skys'].shape[0]:
-#			import pdb; pdb.set_trace()
-#		assert len(jj)==g['skys'].shape[0]
-#		files.append(obsDb.groups[k]['fileName'][jj])
-	return Table(dict(skys=np.ma.vstack(skys),gains=np.ma.vstack(gains),
-	                  gainCor=np.vstack(gainCor),utDate=np.array(utds),
-	                  filt=np.array(filts)),masked=True)
+		try:
+			tabs.append(load_gain_data(gfile,obsDb))
+		except:
+			pass
+	return vstack(tabs)
 
-def all_gain_plots(gainDat=None,diagdir=None,pdfFile='bok_gain_vals.pdf'):
-#	from glob import glob
+def all_gain_plots(gainDat=None,diagdir=None,
+                   raw=False,pdfFile='bok_gain_vals.pdf'):
 	from matplotlib.backends.backend_pdf import PdfPages
 	plt.ioff()
 	if gainDat is None:
 		gainDat = all_gain_vals(diagdir)
-	gainDat = gainDat.group_by(['utDate','filt'])
+	gainDat = gainDat.group_by('utDate')
 	with PdfPages(pdfFile) as pdf:
 		for kdat,gdat in zip(gainDat.groups.keys,gainDat.groups):
-			plot_gain_vals(gdat)
-			plt.title('%s-%s'%(kdat['utDate'],kdat['filt']))
+			plot_gain_vals(gdat,raw=raw)
+			plt.title('%s'%kdat['utDate'])
 			pdf.savefig()
 			plt.close()
 	plt.ion()
