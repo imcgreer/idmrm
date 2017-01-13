@@ -106,11 +106,14 @@ procall:
 	                    -s oscan,proc1,proc2 -t object \
 	                    $(XARGS)
 
+wcs:
+	python bokrmpipe.py $(INITARGS) -s wcs --gaia $(XARGS)
+
 catalogs:
-	python bokrmpipe.py $(INITARGS) -s wcs,cat $(XARGS)
+	python bokrmpipe.py $(INITARGS) -s cat $(XARGS)
 
 redo:
-	make -f Makefile.2014 XARGS="-R $(XARGS)" procall catalogs
+	make -f Makefile.2014 XARGS="-R $(XARGS)" procall wcs catalogs
 
 steps:
 	python bokrmpipe.py $(INITARGS) $(PROCARGS) -s $(STEPS) $(XARGS)

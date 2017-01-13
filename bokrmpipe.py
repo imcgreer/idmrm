@@ -44,6 +44,9 @@ def make_obs_db(args):
 		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
 		# 2. bad images
 		good = np.ones(len(obsDb),dtype=bool)
+		#       #184 telescope was moving
+		bad = [ 'd6649.%04d' % _i for _i in [184] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #1 flat has weird stripes
 		bad = [ 'a%04d' % _i for _i in [1] ]
 		good[(obsDb['utDate']=='20140114') &
@@ -158,6 +161,8 @@ if __name__=='__main__':
 	                help='load only the dark sky frames')
 	parser.add_argument('--makeobsdb',action='store_true',
 	                help='make the observations database')
+	parser.add_argument('--gaia',action='store_true',
+	                help='use GAIA astrometry')
 	parser.add_argument('--makebpmask',type=str,
 	                help='make quick badpix mask from flat <FILENAME>')
 	parser.add_argument('--plver',type=str,default=pipeVersion,
@@ -175,6 +180,11 @@ if __name__=='__main__':
 	dataMap.setCalMap('badpix','master',fileName='BadPixMask')
 	dataMap.setCalMap('badpix4','master',fileName='BadPixMask4')
 	dataMap.setCalMap('ramp','master',fileName='BiasRamp')
+	if args.gaia:
+		sdir = 'scamp_refs_gaia'
+	else:
+		sdir = 'scamp_refs'
+	dataMap.setScampRefCatDir(os.path.join(args.output,'..',sdir))
 	if args.darkskyframes:
 		filt = args.band if args.band else dataMap.getFilters()
 		frames = load_darksky_frames('2014',filt)
