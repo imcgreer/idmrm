@@ -12,6 +12,7 @@ from astropy.coordinates import SkyCoord,match_coordinates_sky
 from astropy import units as u
 from astropy.table import Table,join,vstack
 from astropy.stats import sigma_clip
+from astropy.nddata import block_reduce
 
 from bokpipe import bokphot,bokpl,bokgnostic
 from bokpipe.bokproc import ampOrder,BokImStat
@@ -525,13 +526,15 @@ def image_cutouts(dataMap,catFile,band='g',old=False):
 			hdus.append(fits.ImageHDU(cutobj.data,newhdr))
 		fits.HDUList(hdus).writeto(cutfile)
 
-def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
+def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 	from astropy.visualization import ZScaleInterval
 	from matplotlib.backends.backend_pdf import PdfPages
 	# load object database
 	objs = Table.read(catFile)
 	objs['frameIndex'] = objs['frameId']
-	objs = join(objs,dataMap.obsDb,'frameIndex')
+	tmpObsDb = dataMap.obsDb.copy()
+	tmpObsDb['mjd_mid'] = tmpObsDb['mjd'] + (tmpObsDb['expTime']/2)/(3600*24.)
+	objs = join(objs,tmpObsDb,'frameIndex')
 	objs = objs.group_by('objId')
 	# configure figures
 	nrows,ncols = 8,6
@@ -547,8 +550,20 @@ def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
 	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
 	if True:
 		diffphot = Table.read('bok%s_photflags.fits'%band)
-		errlog = open('bokflags_%s_err.log'%band,'w')
+		errlog = open('bokflags_%s_err.log'%band,'a')
 		bitstr = [ 'TinyFlux','BigFlux','TinyErr','BigErr','BigOff']
+		frameid = np.zeros(diffphot['MJD'].shape,dtype=np.int32)
+		for i in range(len(diffphot)):
+			jj = np.where(diffphot['MJD'][i]>0)[0]
+			for j in jj:
+				dt = diffphot['MJD'][i,j]-tmpObsDb['mjd_mid']
+				_j = np.abs(dt).argmin()
+				if np.abs(dt[_j]) > 5e-4:
+					raise ValueError("no match for ",i,diffphot['MJD'][i,j])
+				else:
+					frameid[i,j] = tmpObsDb['frameIndex'][_j]
+		diffphot['frameIndex'] = frameid
+		matched = diffphot['MJD'] == 0 # ignoring these
 	plt.ioff()
 	for obj in objs.groups:
 		objId = obj['objId'][0]
@@ -571,7 +586,13 @@ def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
 			sys.stdout.flush()
 			ccdNum = obs['ccdNum']
 			cut = hdu.data
-			z1,z2 = zscl.get_limits(cut[cut>0])
+			try:
+				z1,z2 = zscl.get_limits(cut[cut>0])
+			except:
+				try:
+					z1,z2 = np.percentile(cut[cut>0],[10,90])
+				except:
+					z1,z2 = cut.min(),cut.max()
 			if not old:
 				# rotate to N through E
 				if ccdNum==1:
@@ -586,6 +607,8 @@ def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
 				cut = cut[:,::-1]
 			if trim is not None:
 				cut = cut[trim:-trim,trim:-trim]
+			if nbin is not None:
+				cut = block_reduce(cut,nbin,np.mean)
 			#
 			if pnum==nplot+1 or pnum==-1:
 				if pnum != -1:
@@ -611,22 +634,30 @@ def image_thumbnails(dataMap,catFile,band='g',old=False,trim=None):
 			            transform=ax.transAxes)
 			t.set_bbox(dict(color='white',alpha=0.45,boxstyle="square,pad=0"))
 			if True:
-				oid = obs['objId']
-				dt = diffphot['MJD'][oid]-obs['mjd_1']
-				_j = np.abs(dt).argmin()
-				flg = diffphot['FLAG'][oid,_j]
-				if np.abs(dt[_j]) > 1e-2:
-					errlog.write('no diff phot for %d %.4f\n' % 
-					             (oid,obs['mjd_1']))
-				elif flg > 0:
-					flgstr = [ s for bit,s in enumerate(bitstr)
-					               if (flg & (1<<bit)) > 0 ]
-					t = ax.text(0.97,0.8,'\n'.join(flgstr),
-					            size=10,ha='right',va='top',color='red',
-					            transform=ax.transAxes)
+				_j = np.where(diffphot['frameIndex'][objId] ==
+				              obs['frameIndex'])[0]
+				if len(_j)>0:
+					matched[objId,_j] = True
+					flg = diffphot['FLAG'][objId,_j]
+					if flg > 0:
+						flgstr = [ s for bit,s in enumerate(bitstr)
+						               if (flg & (1<<bit)) > 0 ]
+						t = ax.text(0.97,0.8,'\n'.join(flgstr),
+						            size=10,ha='right',va='top',color='red',
+						            transform=ax.transAxes)
+				else:
+					errlog.write('no diff phot for %d %.4f %.4f\n' % 
+					             (objId,obs['mjd_1'],obs['mjd_mid']))
 			ax.xaxis.set_visible(False)
 			ax.yaxis.set_visible(False)
 			pnum += 1
+		if True:
+			jj = np.where(~matched[objId])[0]
+			if len(jj)>0:
+				errlog.write('unmatched for %d:\n'%objId)
+				for j in jj:
+					errlog.write('    %.5f  %d\n'%
+					     (diffphot['MJD'][objId,j],diffphot['FLAG'][objId,j]))
 		if pnum != nplot+1:
 			pdf.savefig()
 			plt.close()
@@ -657,6 +688,8 @@ if __name__=='__main__':
 	                help='make image cutouts from object catalog')
 	parser.add_argument('--thumbnails',action='store_true',
 	                help='make image thumbnails from object catalog')
+	parser.add_argument('--nbin',type=int,
+	                help='factor by which to bin the thumbnail images')
 	parser.add_argument('--old',action='store_true',
 	                help='use old (09/2014) processed images')
 	args = parser.parse_args()
@@ -680,5 +713,6 @@ if __name__=='__main__':
 	elif args.thumbnails:
 		if args.band is None:
 			raise ValueError("must specify filter (g or i)")
-		image_thumbnails(dataMap,args.catalog,band=args.band,old=args.old)
+		image_thumbnails(dataMap,args.catalog,band=args.band,
+		                 nbin=args.nbin,old=args.old)
 
