@@ -262,7 +262,8 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		decs = sorted(foot[:,1])
 		ii = np.where((refCat['ra']>ras[1])&(refCat['ra']<ras[2]) &
 		              (refCat['dec']>decs[1])&(refCat['dec']<decs[2]) &
-		              (refCat[band]<mlim))[0]
+		              True)[0]
+		              #(refCat[band]<mlim))[0]
 		m1,m2,sep = srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
 		                  refCat['ra'][ii],refCat['dec'][ii],5.0)
 		rv.append(dict(N=len(ii),nMatch=len(ii),
@@ -307,6 +308,7 @@ def dump_data_summary(dataMap,splitrm=False):
 def check_processed_data(dataMap):
 	import fitsio
 	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
+	gaia = fits.getdata(os.environ['BOK90PRIMEOUTDIR']+'/scamp_refs_gaia/gaia_sdssrm.fits',1)
 	try:
 		zeropoints = fits.getdata('zeropoints_g.fits')
 	except IOError:
@@ -358,7 +360,7 @@ def check_processed_data(dataMap):
 			rowstr += bokgnostic.html_table_entry('%.2f'%zp,status)
 		catf = dataMap('cat')(f)
 		try:
-			m = check_img_astrom(procf,sdss,catFile=catf)
+			m = check_img_astrom(procf,gaia,catFile=catf)
 			for c in m:
 				sep = np.median(c['sep'])
 				if sep > 0.4:
