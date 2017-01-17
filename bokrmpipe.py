@@ -16,7 +16,7 @@ def set_rm_defaults(args,version=pipeVersion):
 		args.output = os.path.join(os.environ['BOK90PRIMEOUTDIR'],
 		                           version)
 	if args.obsdb is None:
-		args.obsdb = os.path.join('config','sdssrm-bok2014.fits.gz')
+		args.obsdb = os.path.join('config','sdssrm-bok.fits.gz')
 	return args
 
 def make_obs_db(args):
@@ -151,6 +151,15 @@ class IllumFilter(object):
 			keep[jj[nimg>self.maxNImg]] = False
 		return keep
 
+def config_rm_data(dataMap,args):
+	if args.band is None:
+		# set default for RM
+		dataMap.setFilters(['g','i'])
+	dataMap.setCalMap('badpix','master',fileName='BadPixMask')
+	dataMap.setCalMap('badpix4','master',fileName='BadPixMask4')
+	dataMap.setCalMap('ramp','master',fileName='BiasRamp')
+	return dataMap
+
 if __name__=='__main__':
 	import sys
 	import argparse
@@ -174,17 +183,13 @@ if __name__=='__main__':
 		make_obs_db(args)
 		sys.exit(0)
 	dataMap = bokpl.init_data_map(args)
-	if args.band is None:
-		# set default for RM
-		dataMap.setFilters(['g','i'])
-	dataMap.setCalMap('badpix','master',fileName='BadPixMask')
-	dataMap.setCalMap('badpix4','master',fileName='BadPixMask4')
-	dataMap.setCalMap('ramp','master',fileName='BiasRamp')
+	dataMap = config_rm_data(dataMap,args)
 	if args.gaia:
 		sdir = 'scamp_refs_gaia'
 	else:
 		sdir = 'scamp_refs'
 	dataMap.setScampRefCatDir(os.path.join(args.output,'..',sdir))
+	# XXX get rid of this and use a filter as for illum
 	if args.darkskyframes:
 		filt = args.band if args.band else dataMap.getFilters()
 		frames = load_darksky_frames('2014',filt)

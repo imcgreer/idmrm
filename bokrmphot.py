@@ -96,9 +96,9 @@ def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
 			aperZps = np.zeros((len(frames),4),dtype=np.float32)
 			psfZps = np.zeros_like(aperZps)
 			for n,(f,i) in enumerate(zip(files,frames)):
-				expTime =  dataMap.obsDb['expTime'][i]
+				#expTime =  dataMap.obsDb['expTime'][i]
 				frameId =  dataMap.obsDb['frameIndex'][i]
-				ii = np.where(aperCat['frameId']==frameId)[0]
+				ii = np.where(aperCat['frameIndex']==frameId)[0]
 				if len(ii)==0:
 					print 'no data for frame ',f
 					continue
@@ -111,7 +111,7 @@ def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
 					         ~is_mag[aperCat['objId'][ii[c]]] )
 					counts = np.ma.masked_array(
 					            aperCat['counts'][ii[c],aperNum],mask=mask)
-					aperMags = -2.5*np.ma.log10(counts/expTime)
+					aperMags = -2.5*np.ma.log10(counts)
 					snr = counts / aperCat['countsErr'][ii[c],aperNum]
 					refMags = sdss[filt][aperCat['objId'][ii[c]]]
 					dMag = sigma_clip(refMags - aperMags)
@@ -129,7 +129,7 @@ def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
 					dMag = sigma_clip(refMags - psfMags)
 					zp = np.ma.average(dMag)#,weights=snr**2)
 					# have to convert from the sextractor zeropoint
-					zp += 25.0 - 2.5*np.log10(expTime)
+					#zp += 25.0 - 2.5*np.log10(expTime)
 					psfZps[n,ccd-1] = zp
 					# now aperture corrections
 					mask = ( (aperCat['counts'][ii[c]]<=0) |
@@ -146,7 +146,7 @@ def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
 			tab = Table([np.repeat(utd,len(frames)),
 			             dataMap.obsDb['frameIndex'][frames],
 			             aperZps,psfZps,aperCorrs],
-			            names=('utDate','frameId',
+			            names=('utDate','frameIndex',
 			                   'aperZp','psfZp','aperCorr'),
 			            dtype=('S8','i4','f4','f4','f4'))
 			allTabs.append(tab)
@@ -171,7 +171,7 @@ def _read_old_catf(obsDb,catf):
 	           dat1['aperCounts'],dat1['aperCountsErr'],dat1['flags'],
 	           dat1['ccdNum'],frameId],
 	          names=('x','y','objId','counts','countsErr','flags',
-	                 'ccdNum','frameId'))
+	                 'ccdNum','frameIndex'))
 	return t
 
 def construct_lightcurves(dataMap,refCat,old=False):
@@ -202,12 +202,12 @@ def construct_lightcurves(dataMap,refCat,old=False):
 		tab = vstack(allTabs)
 		print 'stacked aperture phot catalogs into table with ',
 		print len(tab),' rows'
-		tab.sort(['objId','frameId'])
-		ii = match_to(tab['frameId'],dataMap.obsDb['frameIndex'])
-		expTime = dataMap.obsDb['expTime'][ii][:,np.newaxis]
+		tab.sort(['objId','frameIndex'])
+		ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
+		#expTime = dataMap.obsDb['expTime'][ii][:,np.newaxis]
 		try:
 			apDat = Table.read('zeropoints_%s.fits'%filt)
-			ii = match_to(tab['frameId'],apDat['frameId'])
+			ii = match_to(tab['frameIndex'],apDat['frameIndex'])
 			nAper = tab['counts'].shape[-1]
 			apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
 			# cannot for the life of me figure out how to do this with indexing
@@ -216,7 +216,7 @@ def construct_lightcurves(dataMap,refCat,old=False):
 				            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
 			zp = apDat['aperZp'][ii]
 			zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
-			corrCps = tab['counts'] * apCorr / expTime
+			corrCps = tab['counts'] * apCorr 
 			magAB = zp - 2.5*np.ma.log10(np.ma.masked_array(corrCps,
 			                                           mask=tab['counts']<=0))
 			tab['aperMag'] = magAB.filled(99.99)
@@ -224,10 +224,10 @@ def construct_lightcurves(dataMap,refCat,old=False):
 			# convert AB mag to nanomaggie
 			fluxConv = 10**(-0.4*(zp-22.5))
 			tab['aperFlux'] = corrCps * fluxConv
-			tab['aperFluxErr'] = (tab['countsErr']/expTime) * apCorr * fluxConv
+			tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
 		except IOError:
 			pass
-		ii = match_to(tab['frameId'],dataMap.obsDb['frameIndex'])
+		ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
 		tab['airmass'] = dataMap.obsDb['airmass'][ii]
 		tab['mjd'] = dataMap.obsDb['mjd'][ii]
 		tab.write(lcFn(filt),overwrite=True)
@@ -334,13 +334,15 @@ def plot_compare_stds(stds,stds_old):
 def load_catalog(catName):
 	dataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
 	if catName == 'sdssrm':
-		cat = fits.getdata(os.path.join(dataDir,'target_fibermap.fits'),1)
+		cat = Table.read(os.path.join(dataDir,'target_fibermap.fits'),1)
+		cat.rename_column('RA','ra')
+		cat.rename_column('DEC','dec')
 		catPfx = 'bokrm'
 	elif catName == 'sdss':
-		cat = fits.getdata(os.path.join(dataDir,'sdss.fits'),1)
+		cat = Table.read(os.path.join(dataDir,'sdss.fits'),1)
 		catPfx = 'bokrm_sdss'
 	elif catName == 'cfht':
-		cat = fits.getdata(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
+		cat = Table.read(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
 		catPfx = 'bokrm_cfht'
 	return dict(catalog=cat,filePrefix=catPfx)
 
