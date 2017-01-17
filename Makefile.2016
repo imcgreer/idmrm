@@ -1,0 +1,15 @@
+#!/usr/bin/make
+
+include Makefile
+
+ifndef UTDATE
+	UTARGS := -u 2016
+endif
+
+ifndef PROCARGS
+	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap
+endif
+
+INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
+            -p $(NPROC) $(VERBOSE)
+

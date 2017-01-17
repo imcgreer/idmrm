@@ -1,125 +1,20 @@
 #!/usr/bin/make
 
-.PHONY: initproc badpix flats proc redo
+all_detrend2014: initproc biasramp badpix proc1 flats proc2
 
-TOOLS := $(HOME)/dev/rapala/bokpipe/tools
+include Makefile
 
-ifdef LOGFILE
-	LOGARGS := --obsdb $(LOGFILE)
-else
-	LOGARGS := --obsdb config/sdssrm-bok2014.fits
-endif
-
-ifdef RAWDATA
-	DATAARGS := -r $(RAWDATA)
-endif
-
-ifdef UTDATE
-	UTARGS := -u $(UTDATE)
-endif
-
-ifndef NPROC
-	NPROC := 7
-endif
-
-ifndef VERBOSE
-	VERBOSE := -vvvv
-endif
-
-ifdef BANDS
-	BANDARGS := -b $(BANDS)
+ifndef UTDATE
+	UTARGS := -u 201312,2014
 endif
 
 ifndef PROCARGS
 	PROCARGS := --nousepixflat --rampcorr --noweightmap
-#	PROCARGS := --nousepixflat --fixsaturation --nobiascorr # XXX 2016 data
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
             -p $(NPROC) $(VERBOSE)
 
-all: initproc badpix flats 
-
-initproc:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s oscan,bias2d,flat2d,ramp \
-	                    -vvv $(XARGS)
-
-# XXX copy in a master bp mask from config dir
-badpix:
-	cp $(BOK90PRIMEOUTDIR)/bokpipe_v0.2/cals/BadPix* $(BOK90PRIMEOUTDIR)/bokpipe_v0.3/cals/
-
-#	python bokrmpipe.py $(INITARGS) \
-#	                    -s bpmask -u 20140425 -b g $(XARGS)
-
-#flats_proc1:
-#	python bokrmpipe.py $(INITARGS) \
-#	                    -s proc1 --prockey TMPPRO1 \
-#	                    --nobiascorr --nosavegain --noweightmap \
-#	                    --darkskyframes --tmpdirout $(XARGS)
-
-proc1:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s proc1 \
-	                    -vvv $(XARGS)
-
-makeillum:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s illum  $(XARGS)
-
-flats_illumcorr:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc2 --prockey TMPPRO2 \
-	                    --nofringecorr --noskyflatcorr \
-	                    --noskysub --noweightmap \
-	                    --darkskyframes --tmpdirout $(XARGS)
-#	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
-
-flats_makefringe:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s fringe \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
-
-flats_fringeskycorr:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc2 --prockey TMPPRO3 \
-	                    --noillumcorr --noskyflatcorr --noweightmap \
-	                    --skymethod polynomial --skyorder 1 \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
-
-flats_makeskyflat:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s skyflat \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
-
-flats: flats_illumcorr \
-       flats_makefringe flats_fringeskycorr \
-       flats_makeskyflat
-
-proc2:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s proc2 \
-	                    $(XARGS)
-
-procall:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s oscan,proc1,proc2 -t object \
-	                    $(XARGS)
-
-wcs:
-	python bokrmpipe.py $(INITARGS) -s wcs --gaia $(XARGS)
-
-catalogs:
-	python bokrmpipe.py $(INITARGS) -s cat $(XARGS)
-
-redo:
-	make -f Makefile.2014 XARGS="-R $(XARGS)" procall wcs catalogs
-
-steps:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) -s $(STEPS) $(XARGS)
-
-images:
-	python bokrmpipe.py $(INITARGS) --images $(XARGS)
 
 # run the pipeline on g-band dark night to look at CCD3 gradient by only doing
 # bias subtraction (-n allows comparison of oscan vs. bias-subtracted) with no
