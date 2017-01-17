@@ -2,75 +2,79 @@
 
 import os
 import numpy as np
+import multiprocessing
+from functools import partial
 from astropy.io import fits
 from astropy.table import Table,vstack
 from astropy.stats import sigma_clip
+from astropy.wcs import InconsistentAxisTypesError
 
-from bokpipe import bokphot,bokpl
+from bokpipe import bokphot,bokpl,bokproc,bokutil
 import bokrmpipe
 #from bokrmgnostic import srcor
 
-def aperture_phot(dataMap,refCat,inputType='sky',**kwargs):
-	from astropy.table import Table,vstack
-	from astropy.wcs import InconsistentAxisTypesError
-	redo = kwargs.get('redo',False)
+def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
+                inp,**kwargs):
+	utd,filt = inp
+	redo = kwargs.pop('redo',False)
+	fn = '.'.join([catPfx,utd,filt,'cat','fits'])
+	catFile = os.path.join(catDir,fn)
+	if os.path.exists(catFile) and not redo:
+		print catFile,' already exists, skipping'
+		return
+	files,frames = dataMap.getFiles(imType='object',utd=utd,filt=filt,
+	                                with_frames=True)
+	if files is None:
+		return
+	#
+	bpMask = dataMap.getCalMap('badpix4')
+	diagfile = os.path.join(dataMap.getDiagDir(), 'gainbal_%s.npz'%utd)
+	gainDat = np.load(diagfile)
+	#
+	allPhot = []
+	for f,frame in zip(files,frames):
+		imageFile = dataMap(inputType)(f)
+		aHeadFile = imageFile.replace('.fits','.ahead')
+		fileNum = np.where(gainDat['files']==os.path.basename(f))[0][0]
+		gains = gainDat['gainCor'][fileNum]
+		gains = np.product(gains.squeeze(),axis=1) 
+		gains *= np.array(bokproc.nominal_gain)
+		skyAdu = gainDat['skys'][fileNum]
+		expTime = fits.getheader(imageFile,0)['EXPTIME']
+		varIm = bokpl.make_variance_image(dataMap,f,bpMask,
+		                                  expTime,gains,skyAdu)
+		print 'aperture photometering ',imageFile
+		try:
+			phot = bokphot.aper_phot_image(imageFile,
+			                               refCat['ra'],refCat['dec'],
+			                               aperRad,bpMask(f),varIm,
+			                               aHeadFile=aHeadFile,
+			                               **kwargs)
+		except InconsistentAxisTypesError:
+			print 'WCS FAILED!!!'
+			continue
+		if phot is None:
+			print 'no apertures found!!!!'
+			continue
+		phot['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
+		allPhot.append(phot)
+	allPhot = vstack(allPhot)
+	allPhot.write(catFile,overwrite=True)
+
+def aperture_phot(dataMap,refCat,procmap,inputType='sky',**kwargs):
+	kwargs.setdefault('mask_is_weight_map',False)
+	kwargs.setdefault('background','global')
 	aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
-	bpMask = dataMap('MasterBadPixMask4')
 	catDir = os.path.join(dataMap.procDir,'catalogs')
 	if not os.path.exists(catDir):
 		os.mkdir(catDir)
 	catPfx = refCat['filePrefix']
 	refCat = refCat['catalog']
-	for filt in dataMap.iterFilters():
-		for utd in dataMap.iterUtDates():
-			fn = '.'.join([catPfx,utd,filt,'cat','fits'])
-			catFile = os.path.join(catDir,fn)
-			if os.path.exists(catFile) and not redo:
-				print catFile,' already exists, skipping'
-				continue
-			files,frames = dataMap.getFiles(imType='object',
-			                                with_frames=True)
-			if files is None:
-				continue
-			allPhot = []
-			for imFile,frame in zip(files,frames):
-				imageFile = dataMap(inputType)(imFile)
-				aHeadFile = imageFile.replace('.fits','.ahead')
-				print 'aperture photometering ',imageFile
-				try:
-					phot = bokphot.aper_phot_image(imageFile,
-					                               refCat['ra'],refCat['dec'],
-					                               aperRad,bpMask,
-					                               aHeadFile=aHeadFile,
-					                               **kwargs)
-				except InconsistentAxisTypesError:
-					print 'WCS FAILED!!!'
-					continue
-				phot['frameId'] = dataMap.obsDb['frameIndex'][frame]
-				if phot is None:
-					print 'no apertures found!!!!'
-					continue
-				allPhot.append(phot)
-			allPhot = vstack(allPhot)
-			allPhot.write(catFile,overwrite=True)
-
-# XXX should have this in single location with better chunking
-def aperphot_poormp(dataMap,refCat,nProc,**kwargs):
-	from copy import copy
-	import multiprocessing
-	def chunks(l, n):
-		nstep = int(round(len(l)/float(n)))
-		for i in xrange(0, len(l), nstep):
-			yield l[i:i+nstep]
-	utdSets = chunks(dataMap.getUtDates(),nProc)
-	jobs = []
-	for i,utds in enumerate(utdSets):
-		dmap = copy(dataMap)
-		dmap.setUtDates(utds)
-		p = multiprocessing.Process(target=aperture_phot,
-		                            args=(dmap,refCat),kwargs=kwargs)
-		jobs.append(p)
-		p.start()
+	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
+	                         for filt in dataMap.iterFilters() ]
+	p_aper_worker = partial(aper_worker,dataMap,inputType,
+	                        aperRad,refCat,catDir,catPfx,**kwargs)
+	procmap(p_aper_worker,utdlist)
 
 def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
 	pfx = 'bokrm_sdss'
@@ -348,6 +352,8 @@ if __name__=='__main__':
 	                help='reference catalog ([sdssrm]|sdss|cfht)')
 	parser.add_argument('--aperphot',action='store_true',
 	                help='generate aperture photometry catalogs')
+	parser.add_argument('--background',type=str,default='global',
+	                help='background method to use for aperture phot ([global]|local|none)')
 	parser.add_argument('--lightcurves',action='store_true',
 	                help='construct lightcurves')
 	parser.add_argument('--nightly',action='store_true',
@@ -358,21 +364,33 @@ if __name__=='__main__':
 	                help='number of processes to use [default=single]')
 	parser.add_argument('--old',action='store_true',
 	                help='use 2014 catalogs for comparison')
+	parser.add_argument('-v','--verbose',action='count',
+	                    help='increase output verbosity')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	dataMap.setFilters(['g','i'])
-	#dataMap = bokpl.set_master_cals(dataMap)
+	dataMap = bokrmpipe.config_rm_data(dataMap,args)
 	refCat = load_catalog(args.catalog)
+	timerLog = bokutil.TimerLog()
 	if args.aperphot:
 		if args.processes == 1:
-			aperture_phot(dataMap,refCat,redo=args.redo)
+			procmap = map
 		else:
-			aperphot_poormp(dataMap,refCat,args.processes,redo=args.redo)
+			pool = multiprocessing.Pool(args.processes)
+			procmap = pool.map
+		aperture_phot(dataMap,refCat,procmap,redo=args.redo,
+		              background=args.background)
+		timerLog('aper phot')
+		if args.processes > 1:
+			pool.close()
 	elif args.lightcurves:
 		construct_lightcurves(dataMap,refCat,old=args.old)
+		timerLog('lightcurves')
 	elif args.nightly:
 		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
+		timerLog('night-avgd phot')
 	elif args.zeropoint:
 		zero_points(dataMap)
+		timerLog('zeropoints')
+	timerLog.dump()
 
