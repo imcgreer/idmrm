@@ -8,8 +8,6 @@ from matplotlib import ticker
 from scipy.interpolate import LSQUnivariateSpline
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord,match_coordinates_sky
-from astropy import units as u
 from astropy.table import Table,join,vstack
 from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
@@ -183,13 +181,6 @@ def all_gain_plots(gainDat=None,diagdir=None,
 			plt.close()
 	plt.ion()
 
-def srcor(ra1,dec1,ra2,dec2,sep):
-	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
-	c2 = SkyCoord(ra2,dec2,unit=(u.degree,u.degree))
-	idx,d2d,d3c = match_coordinates_sky(c1,c2)
-	ii = np.where(d2d.arcsec < sep)[0]
-	return ii,idx[ii],d2d.arcsec[ii]
-
 def calc_sky_backgrounds(dataMap,outputFile):
 	extns = ['IM4']
 	imstat = BokImStat(extensions=extns,quickprocess=True,
@@ -264,8 +255,8 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		              (refCat['dec']>decs[1])&(refCat['dec']<decs[2]) &
 		              True)[0]
 		              #(refCat[band]<mlim))[0]
-		m1,m2,sep = srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
-		                  refCat['ra'][ii],refCat['dec'][ii],5.0)
+		m1,m2,sep = bokrmphot.srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
+		                            refCat['ra'][ii],refCat['dec'][ii],5.0)
 		rv.append(dict(N=len(ii),nMatch=len(ii),
 		               ra=ccdCat['ALPHA_J2000'][m1],
 		               dec=ccdCat['DELTA_J2000'][m1],
@@ -340,7 +331,7 @@ def check_processed_data(dataMap):
 				rowstr += bokgnostic.html_table_entry('','missing')
 		try:
 			zpi = np.where(dataMap.obsDb['frameIndex'][i] ==
-			                                  zeropoints['frameId'])[0][0]
+			                                zeropoints['frameIndex'])[0][0]
 		except:
 			zpi = None
 		for ccdi in range(4):
@@ -484,7 +475,10 @@ def check_bias_ramp(dataMap):
 def image_cutouts(dataMap,catFile,band='g',old=False):
 	from astropy.nddata import Cutout2D
 	objs = Table.read(catFile)
-	objs['frameIndex'] = objs['frameId']
+	try:
+		objs['frameIndex'] = objs['frameId']
+	except:
+		pass
 	objs = join(objs,dataMap.obsDb,'frameIndex')
 	objs = objs.group_by('objId')
 	if old:
@@ -533,7 +527,10 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 	from matplotlib.backends.backend_pdf import PdfPages
 	# load object database
 	objs = Table.read(catFile)
-	objs['frameIndex'] = objs['frameId']
+	try:
+		objs['frameIndex'] = objs['frameId']
+	except:
+		pass
 	tmpObsDb = dataMap.obsDb.copy()
 	tmpObsDb['mjd_mid'] = tmpObsDb['mjd'] + (tmpObsDb['expTime']/2)/(3600*24.)
 	objs = join(objs,tmpObsDb,'frameIndex')

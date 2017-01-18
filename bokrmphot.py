@@ -76,82 +76,106 @@ def aperture_phot(dataMap,refCat,procmap,inputType='sky',**kwargs):
 	                        aperRad,refCat,catDir,catPfx,**kwargs)
 	procmap(p_aper_worker,utdlist)
 
-def zero_points(dataMap,magRange=(16.,19.5),aperNum=-2):
+def srcor(ra1,dec1,ra2,dec2,sep):
+	from astropy.coordinates import SkyCoord,match_coordinates_sky
+	from astropy import units as u
+	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
+	c2 = SkyCoord(ra2,dec2,unit=(u.degree,u.degree))
+	idx,d2d,d3c = match_coordinates_sky(c1,c2)
+	ii = np.where(d2d.arcsec < sep)[0]
+	return ii,idx[ii],d2d.arcsec[ii]
+
+def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
+	utd,filt = inp
+	is_mag = ( (sdss[filt]>=magRange[0]) & (sdss[filt]<=magRange[1]) )
+	ref_ii = np.where(is_mag)[0]
+	print 'calculating zero points for ',utd
+	aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
+	files,frames = dataMap.getFiles(imType='object',utd=utd,filt=filt,
+	                                with_frames=True)
+	if files is None:
+		return None
+	aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
+	nAper = aperCat['counts'].shape[-1]
+	aperCorrs = np.zeros((len(frames),nAper,4),dtype=np.float32)
+	aperZps = np.zeros((len(frames),4),dtype=np.float32)
+	aperNstar = np.zeros((len(frames),4),dtype=np.int32)
+	psfZps = np.zeros_like(aperZps)
+	psfNstar = np.zeros_like(aperNstar)
+	for n,(f,i) in enumerate(zip(files,frames)):
+		#expTime =  dataMap.obsDb['expTime'][i]
+		frameId =  dataMap.obsDb['frameIndex'][i]
+		ii = np.where(aperCat['frameIndex']==frameId)[0]
+		if len(ii)==0:
+			print 'no data for frame ',f
+			continue
+		xCat = fits.open(dataMap('cat')(f))
+		for ccd in range(1,5):
+			# first for the aperture photometry
+			c = np.where(aperCat['ccdNum'][ii]==ccd)[0]
+			mask = ( (aperCat['counts'][ii[c],aperNum]<=0) |
+			         (aperCat['flags'][ii[c],aperNum]>0) |
+			         ~is_mag[aperCat['objId'][ii[c]]] )
+			nstar = (~mask).sum()
+			if nstar > 20:
+				counts = np.ma.masked_array(
+				            aperCat['counts'][ii[c],aperNum],mask=mask)
+				aperMags = -2.5*np.ma.log10(counts)
+				snr = counts / aperCat['countsErr'][ii[c],aperNum]
+				refMags = sdss[filt][aperCat['objId'][ii[c]]]
+				dMag = sigma_clip(refMags - aperMags)
+				zp = np.ma.average(dMag,weights=snr**2)
+				aperNstar[n,ccd-1] = len(dMag.compressed())
+				aperZps[n,ccd-1] = zp
+				# now aperture corrections
+				mask = ( (aperCat['counts'][ii[c]]<=0) |
+				         (aperCat['flags'][ii[c]]>0) |
+				         ~is_mag[aperCat['objId'][ii[c]]][:,np.newaxis] )
+				counts = np.ma.masked_array(
+				            aperCat['counts'][ii[c]],mask=mask)
+				fratio = np.ma.divide(counts,counts[:,-1][:,np.newaxis])
+				fratio = np.ma.masked_outside(fratio,0,1.5)
+				fratio = sigma_clip(fratio,axis=0)
+				invfratio = np.ma.power(fratio,-1)
+				aperCorrs[n,:,ccd-1] = invfratio.mean(axis=0).filled(0)
+			else:
+				print 'WARNING: only %d stars for %s[%d]' % (nstar,f,ccd)
+			# then for the sextractor PSF mags
+			m1,m2,s = srcor(xCat[ccd].data['ALPHA_J2000'],
+			                xCat[ccd].data['DELTA_J2000'],
+			                sdss['ra'][ref_ii],sdss['dec'][ref_ii],2.5)
+			if len(m1) > 20:
+				refMags = sdss[filt][ref_ii[m2]]
+				psfMags = xCat[ccd].data['MAG_PSF'][m1]
+				dMag = sigma_clip(refMags - psfMags)
+				zp = np.ma.average(dMag)#,weights=snr**2)
+				psfNstar[n,ccd-1] = len(dMag.compressed())
+				# have to convert from the sextractor zeropoint
+				#zp += 25.0 - 2.5*np.log10(expTime)
+				psfZps[n,ccd-1] = zp
+			else:
+				print 'WARNING: only %d psf stars for %s[%d]' % (len(m1),f,ccd)
+	aperCorrs = np.clip(aperCorrs,1,np.inf)
+	tab = Table([np.repeat(utd,len(frames)),
+	             dataMap.obsDb['frameIndex'][frames],
+	             aperZps,psfZps,aperCorrs],
+	            names=('utDate','frameIndex',
+	                   'aperZp','psfZp',
+	                   'aperCorr'),
+	            dtype=('S8','i4','f4','f4','f4'))
+	return tab
+
+def zero_points(dataMap,procmap,magRange=(17.,19.5),aperNum=-2):
 	pfx = 'bokrm_sdss'
 	aperCatDir = os.path.join(dataMap.procDir,'catalogs')
 	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
-	for filt in dataMap.iterFilters():
-		is_mag = ( (sdss[filt]>=magRange[0]) & (sdss[filt]<=magRange[1]) )
-		ref_ii = np.where(is_mag)[0]
-		allTabs = []
-		for utd in dataMap.iterUtDates():
-			print 'calculating zero points for ',utd
-			aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
-			files,frames = dataMap.getFiles('object',with_frames=True)
-			if files is None:
-				continue
-			aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
-			nAper = aperCat['counts'].shape[-1]
-			aperCorrs = np.zeros((len(frames),nAper,4),dtype=np.float32)
-			aperZps = np.zeros((len(frames),4),dtype=np.float32)
-			psfZps = np.zeros_like(aperZps)
-			for n,(f,i) in enumerate(zip(files,frames)):
-				#expTime =  dataMap.obsDb['expTime'][i]
-				frameId =  dataMap.obsDb['frameIndex'][i]
-				ii = np.where(aperCat['frameIndex']==frameId)[0]
-				if len(ii)==0:
-					print 'no data for frame ',f
-					continue
-				xCat = fits.open(dataMap('cat')(f))
-				for ccd in range(1,5):
-					# first for the aperture photometry
-					c = np.where(aperCat['ccdNum'][ii]==ccd)[0]
-					mask = ( (aperCat['counts'][ii[c],aperNum]<=0) |
-					         (aperCat['flags'][ii[c],aperNum]>0) |
-					         ~is_mag[aperCat['objId'][ii[c]]] )
-					counts = np.ma.masked_array(
-					            aperCat['counts'][ii[c],aperNum],mask=mask)
-					aperMags = -2.5*np.ma.log10(counts)
-					snr = counts / aperCat['countsErr'][ii[c],aperNum]
-					refMags = sdss[filt][aperCat['objId'][ii[c]]]
-					dMag = sigma_clip(refMags - aperMags)
-					zp = np.ma.average(dMag,weights=snr**2)
-					aperZps[n,ccd-1] = zp
-					# then for the sextractor PSF mags
-					m1,m2,s = srcor(xCat[ccd].data['ALPHA_J2000'],
-					                xCat[ccd].data['DELTA_J2000'],
-					                sdss['ra'][ref_ii],sdss['dec'][ref_ii],2.5)
-					if len(m1)==0:
-						print f,' has no catalog matches!!!'
-						continue
-					refMags = sdss[filt][ref_ii[m2]]
-					psfMags = xCat[ccd].data['MAG_PSF'][m1]
-					dMag = sigma_clip(refMags - psfMags)
-					zp = np.ma.average(dMag)#,weights=snr**2)
-					# have to convert from the sextractor zeropoint
-					#zp += 25.0 - 2.5*np.log10(expTime)
-					psfZps[n,ccd-1] = zp
-					# now aperture corrections
-					mask = ( (aperCat['counts'][ii[c]]<=0) |
-					         (aperCat['flags'][ii[c]]>0) |
-					         ~is_mag[aperCat['objId'][ii[c]]][:,np.newaxis] )
-					counts = np.ma.masked_array(
-					            aperCat['counts'][ii[c]],mask=mask)
-					refMags = sdss[filt][aperCat['objId'][ii[c]]]
-					fratio = counts / counts[:,-1][:,np.newaxis]
-					fratio = np.ma.masked_outside(fratio,0,1.5)
-					fratio = sigma_clip(fratio,axis=0)
-					aperCorrs[n,:,ccd-1] = (1/fratio).mean(axis=0).filled(0)
-			aperCorrs = np.clip(aperCorrs,1,np.inf)
-			tab = Table([np.repeat(utd,len(frames)),
-			             dataMap.obsDb['frameIndex'][frames],
-			             aperZps,psfZps,aperCorrs],
-			            names=('utDate','frameIndex',
-			                   'aperZp','psfZp','aperCorr'),
-			            dtype=('S8','i4','f4','f4','f4'))
-			allTabs.append(tab)
-		tab = vstack(allTabs)
-		tab.write('zeropoints_%s.fits'%filt,overwrite=True)
+	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
+	                         for filt in dataMap.iterFilters() ]
+	p_zp_worker = partial(zp_worker,dataMap,aperCatDir,sdss,pfx,
+	                      magRange,aperNum)
+	tabs = procmap(p_zp_worker,utdlist)
+	tab = vstack(filter(None,tabs))
+	tab.write('zeropoints_%s.fits'%filt,overwrite=True)
 
 def match_to(ids1,ids2):
 	idx = { j:i for i,j in enumerate(ids2) }
@@ -178,7 +202,7 @@ def construct_lightcurves(dataMap,refCat,old=False):
 	if old:
 		pfx = refCat['filePrefix']
 		# renaming
-		pfx = {'sdss':'sdssbright'}.get(pfx,pfx)
+		pfx = {'bokrm_sdss':'sdssbright'}.get(pfx,pfx)
 		aperCatDir = os.environ['HOME']+'/data/projects/SDSS-RM/rmreduce/catalogs_v2b/'
 		lcFn = lambda filt: 'lightcurves_%s_%s_old.fits' % (pfx,filt)
 	else:
@@ -284,53 +308,6 @@ def nightly_lightcurves(catName,lcs=None,redo=False):
 	tab['aperMagErr'] = err.filled(99.99)
 	tab.write(lcFn,overwrite=redo)
 
-def phot_stats(lcs,refPhot):
-	from scipy.stats import scoreatpercentile
-	band = 'g'
-	apNum = 3
-	if len(lcs.groups)==1:
-		lcs = lcs.group_by('objId')
-	medges = np.arange(16.9,19.11,0.2)
-	mbins = medges[:-1] + np.diff(medges)/2
-	all_dmag = []
-	all_stds = []
-	for mag1,mag2 in zip(medges[:-1],medges[1:]):
-		ref_ii = np.where((refPhot[band]>mag1)&(refPhot[band]<mag2))[0]
-		jj = np.where(np.in1d(lcs.groups.keys['objId'],ref_ii))[0]
-		print 'found ',len(jj),' ref objs out of ',len(ref_ii)
-		dmag = []
-		stds = []
-		for j in jj:
-			mags = np.ma.masked_array(lcs.groups[j]['aperMag'][:,apNum],
-			              mask=( (lcs.groups[j]['flags'][:,apNum]>0) |
-			                     (lcs.groups[j]['aperMag'][:,apNum]>99) ) )
-			if mags.mask.all():
-				continue
-			mags = sigma_clip(mags,iters=1,sigma=5.0)
-			dmag.append((mags-mags.mean()).compressed())
-			stds.append((mags-mags.mean()).std())
-		dmag = np.concatenate(dmag)
-		stds = np.array(stds)
-		print mag1,mag2,dmag.std(),np.median(stds)
-		all_dmag.append(dmag)
-		all_stds.append([scoreatpercentile(stds,_p) for _p in [25,50,75]])
-	all_stds = np.array(all_stds)
-	return all_dmag,all_stds
-
-def plot_compare_stds(stds,stds_old):
-	import matplotlib.pyplot as plt
-	medges = np.arange(16.9,19.11,0.2)
-	mbins = medges[:-1] + np.diff(medges)/2
-	def _append_arr(arr):
-		return arr
-		# used this for drawstyle=steps-post, but no equiv. for fill_between
-		#return np.concatenate([arr,[arr[-1]]])
-	plt.figure()
-	for s,c in zip([stds_old,stds],'gb'):
-		plt.fill_between(mbins,_append_arr(s[:,0]),_append_arr(s[:,2]),
-		                 edgecolor='none',color=c,alpha=0.5)
-		plt.plot(mbins,_append_arr(s[:,1]),color=c,lw=1.5)
-
 def load_catalog(catName):
 	dataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
 	if catName == 'sdssrm':
@@ -373,18 +350,16 @@ if __name__=='__main__':
 	dataMap = bokpl.init_data_map(args)
 	dataMap = bokrmpipe.config_rm_data(dataMap,args)
 	refCat = load_catalog(args.catalog)
+	if args.processes == 1:
+		procmap = map
+	else:
+		pool = multiprocessing.Pool(args.processes)
+		procmap = pool.map
 	timerLog = bokutil.TimerLog()
 	if args.aperphot:
-		if args.processes == 1:
-			procmap = map
-		else:
-			pool = multiprocessing.Pool(args.processes)
-			procmap = pool.map
 		aperture_phot(dataMap,refCat,procmap,redo=args.redo,
 		              background=args.background)
 		timerLog('aper phot')
-		if args.processes > 1:
-			pool.close()
 	elif args.lightcurves:
 		construct_lightcurves(dataMap,refCat,old=args.old)
 		timerLog('lightcurves')
@@ -392,7 +367,9 @@ if __name__=='__main__':
 		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('night-avgd phot')
 	elif args.zeropoint:
-		zero_points(dataMap)
+		zero_points(dataMap,procmap)
 		timerLog('zeropoints')
 	timerLog.dump()
+	if args.processes > 1:
+		pool.close()
 

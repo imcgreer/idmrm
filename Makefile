@@ -142,6 +142,22 @@ aperphot_sdss:
 aperphot_cfht:
 	python bokrmphot.py $(INITARGS) --aperphot $(XARGS) --catalog cfht
 
+aperphot: aperphot_sdss aperphot_cfht aperphot_rm
+
+zeropoints:
+	python bokrmphot.py $(INITARGS) --zeropoint $(XARGS)
+
+# Generate lightcurve tables for RM targets
+lightcurves_rm:
+	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS)
+
+# Generate lightcurve tables for SDSS reference stars
+lightcurves_sdss:
+	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS) --catalog sdss
+
+# Generate lightcurve tables for CFHT reference stars
+lightcurves_cfht:
+	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS) --catalog cfht
 
 
 # Redo all processing, WCS, and catalogs from scratch

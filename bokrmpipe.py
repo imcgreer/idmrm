@@ -93,10 +93,11 @@ def make_obs_db(args):
 	isrm = iszero | isflat | isrmfield
 	rmObsDbFile = os.path.join('config','sdssrm-bok.fits')
 	obsDb[isrm].write(rmObsDbFile,overwrite=True)
-	# all RM observations in 2014
-	isrm2014 = isrm & (obsDb['mjd']<57000)
-	rmObsDbFile = os.path.join('config','sdssrm-bok2014.fits')
-	obsDb[isrm2014].write(rmObsDbFile,overwrite=True)
+	if False:
+		# all RM observations in 2014
+		isrm2014 = isrm & (obsDb['mjd']<57000)
+		rmObsDbFile = os.path.join('config','sdssrm-bok2014.fits')
+		obsDb[isrm2014].write(rmObsDbFile,overwrite=True)
 
 def load_darksky_frames(season,filt):
 	tab = []
