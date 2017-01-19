@@ -5,13 +5,12 @@ import numpy as np
 import multiprocessing
 from functools import partial
 from astropy.io import fits
-from astropy.table import Table,vstack
+from astropy.table import Table,vstack,join
 from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
 
 from bokpipe import bokphot,bokpl,bokproc,bokutil
 import bokrmpipe
-#from bokrmgnostic import srcor
 
 def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
                 inp,**kwargs):
@@ -75,6 +74,105 @@ def aperture_phot(dataMap,refCat,procmap,inputType='sky',**kwargs):
 	p_aper_worker = partial(aper_worker,dataMap,inputType,
 	                        aperRad,refCat,catDir,catPfx,**kwargs)
 	procmap(p_aper_worker,utdlist)
+
+def load_full_ref_cat(phot,band='g',magRange=(17.,20.)):
+	#phot = Table.read('lightcurves_bokrm_sdss_%s.fits'%band)
+	cdir = os.environ['BOKRMDIR']
+	sdssRef = Table.read(cdir+'/data/sdssRefStars_DR13.fits.gz')
+	obsLog = Table.read(cdir+'/config/sdssrm-bok.fits.gz')
+	metaDat = Table.read(cdir+'/data/BokRMFrameList.fits.gz')
+	t = join(phot,sdssRef['objId','g','i'],keys='objId',join_type='left')
+	t = t[(t[band]>magRange[0])&(t[band]<=magRange[1])]
+	t = join(t,obsLog['frameIndex','filter'],
+	         keys='frameIndex',join_type='left')
+	t = join(t,metaDat,keys='frameIndex',join_type='left')
+	t = t.group_by('objId')
+	return t
+
+def calc_color_terms(t,doplots=False,savefit=False):
+	cdir = os.environ['BOKRMDIR']
+	b = 'g'
+	aperNum = -2
+	zpLim = 25.9
+	ref = 'sdss'
+	airmassLim = 1.2
+	extCorr = {'g':0.17,'i':0.06} # SDSS values, should be close enough
+	ii = np.arange(len(t))
+	ccdj = t['ccdNum'] = 1
+	mag = np.ma.array(t['counts'][:,aperNum],
+	                  mask=((t['flags'][:,aperNum] > 0) |
+	                        (t['countsErr'][:,aperNum] <= 0) |
+	                        (t['aperZp'][ii,ccdj] <= zpLim) |
+	                        (t['psfNstar'][ii,ccdj] < 100) |
+	                        (t['fwhmPix'][ii,ccdj] > 4.0) |
+	                        (t['airmass'] > airmassLim)))
+	mag = -2.5*np.ma.log10(mag) - extCorr[b]*t['airmass']
+	refmag = t[b]
+	dmag = sigma_clip(mag-refmag)
+	zp0 = dmag.mean()
+	bokmag = mag - zp0
+	dmag = bokmag - refmag
+	refclr = t['g'] - t['i']
+	# iteratively fit a polynomial of increasing order to the
+	# magnitude differences
+	mask = np.abs(dmag) > 0.25
+	for iternum in range(3):
+		order = iternum+1
+		tmp_dmag = np.ma.array(dmag,mask=mask)
+		cterms = np.ma.polyfit(refclr,tmp_dmag,order)
+		magoff = sigma_clip(dmag-np.polyval(cterms,refclr))
+		mask = magoff.mask
+	if savefit:
+		np.savetxt(cdir+'/config/bok2%s_%s_gicoeff.dat'%(ref,b),cterms)
+	if doplots:
+		import matplotlib.pyplot as plt
+		from matplotlib import ticker
+		gridsize = (50,20)
+		ii = np.where(np.abs(dmag)<0.25)[0]
+		fig = plt.figure(figsize=(10,6))
+		fig.subplots_adjust(0.09,0.1,0.98,0.92)
+		ax1 = fig.add_subplot(211)
+		ax1.hexbin(refclr[ii],dmag[ii],#gridsize=gridsize,
+		           cmap=plt.get_cmap('gray_r'),bins='log')
+		ax1.axhline(0,c='c')
+		xx = np.linspace(-1,5,100)
+		if True and b=='g':
+			desicterms = np.loadtxt(os.path.join(os.environ['BOKPIPE'],
+			                        '..','survey','config',
+			                        'bok2sdss_g_gicoeff.dat'))
+			desicterms[-1] = 0.05055 # argh, removed zero level
+			ax1.plot(xx[::3],np.polyval(desicterms,xx[::3]),'--',
+			         c='orange',alpha=0.7)
+		ax1.plot(xx,np.polyval(cterms,xx),c='r')
+		ax1.set_ylabel('%s(Bok) - %s(%s)'%(b,b,ref.upper()))
+		ax1.set_ylim(-0.25,0.25)
+		order = len(cterms)-1
+		polystr = ' '.join(['%+.5f*%s^%d'%(c,'gi',order-d) 
+		                      for d,c in enumerate(cterms)])
+		ax1.set_title(('$%s(Bok) - %s(%s) = '%(b,b,ref.upper())) +
+		              polystr+'$',size=14)
+		ax2 = fig.add_subplot(212)
+		ax2.hexbin(refclr[ii],dmag[ii]-np.polyval(cterms,refclr[ii]),
+		           #gridsize=gridsize,
+		           cmap=plt.get_cmap('gray_r'),bins='log')
+		ax2.axhline(0,c='r')
+		ax2.set_ylim(-0.15,0.15)
+		for ax in [ax1,ax2]:
+			if ref=='sdss':
+				ax.axvline(0.4,c='b')
+				ax.axvline(3.7,c='b')
+				ax.set_xlabel('SDSS g-i')
+				ax.set_xlim(-0.05,3.9)
+			else:
+				ax.axvline(0.4,c='b')
+				ax.axvline(2.7,c='b')
+				ax.set_xlabel('PS1 g-i')
+				ax.set_xlim(-0.05,2.8)
+			ax.axvline(0,c='MidnightBlue')
+			ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+			ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.02))
+		if False:
+			fig.savefig('%s_%s_to_bok_gicolors.png'%(b,ref))
 
 def srcor(ra1,dec1,ra2,dec2,sep):
 	from astropy.coordinates import SkyCoord,match_coordinates_sky
@@ -158,20 +256,19 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	aperCorrs = np.clip(aperCorrs,1,np.inf)
 	tab = Table([np.repeat(utd,len(frames)),
 	             dataMap.obsDb['frameIndex'][frames],
-	             aperZps,psfZps,aperCorrs],
+	             aperZps,aperNstar,psfZps,psfNstar,aperCorrs],
 	            names=('utDate','frameIndex',
-	                   'aperZp','psfZp',
+	                   'aperZp','aperNstar','psfZp','psfNstar',
 	                   'aperCorr'),
-	            dtype=('S8','i4','f4','f4','f4'))
+	            dtype=('S8','i4','f4','i4','f4','i4','f4'))
 	return tab
 
-def zero_points(dataMap,procmap,magRange=(17.,19.5),aperNum=-2):
-	pfx = 'bokrm_sdss'
+def zero_points(dataMap,procmap,refCat,magRange=(17.,19.5),aperNum=-2):
 	aperCatDir = os.path.join(dataMap.procDir,'catalogs')
-	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
 	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
 	                         for filt in dataMap.iterFilters() ]
-	p_zp_worker = partial(zp_worker,dataMap,aperCatDir,sdss,pfx,
+	p_zp_worker = partial(zp_worker,dataMap,aperCatDir,
+	                      refCat['catalog'],refCat['filePrefix'],
 	                      magRange,aperNum)
 	tabs = procmap(p_zp_worker,utdlist)
 	tab = vstack(filter(None,tabs))
@@ -316,8 +413,13 @@ def load_catalog(catName):
 		cat.rename_column('DEC','dec')
 		catPfx = 'bokrm'
 	elif catName == 'sdss':
-		cat = Table.read(os.path.join(dataDir,'sdss.fits'),1)
+		catfn = os.path.join('.','data','sdssRefStars_DR13.fits.gz')
+		print 'loading references from sdssRefStars_DR13.fits.gz'
+		cat = Table.read(catfn,1)
 		catPfx = 'bokrm_sdss'
+	elif catName == 'sdssold':
+		cat = Table.read(os.path.join(dataDir,'sdss.fits'),1)
+		catPfx = 'bokrm_sdssold'
 	elif catName == 'cfht':
 		cat = Table.read(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
 		catPfx = 'bokrm_cfht'
@@ -367,7 +469,7 @@ if __name__=='__main__':
 		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('night-avgd phot')
 	elif args.zeropoint:
-		zero_points(dataMap,procmap)
+		zero_points(dataMap,procmap,refCat)
 		timerLog('zeropoints')
 	timerLog.dump()
 	if args.processes > 1:
