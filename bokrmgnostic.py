@@ -266,7 +266,14 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 	return rv
 
 def rmobs_meta_data(dataMap):
-	bokgnostic.obs_meta_data(dataMap,outFile='bokrmMetaData.fits')
+	tabf = 'data/BokRMFrameList.fits'
+	bokgnostic.obs_meta_data(dataMap,outFile=tabf)
+	tab = Table.read(tabf)
+	for b in 'g':
+		zpdat = Table.read('zeropoints_%s.fits' % b)
+		del zpdat['utDate']
+		tab = join(tab,zpdat,'frameIndex','left')
+	tab.write(tabf,overwrite=True)
 
 def dump_data_summary(dataMap,splitrm=False):
 	for utd in dataMap.iterUtDates():
@@ -299,7 +306,8 @@ def dump_data_summary(dataMap,splitrm=False):
 def check_processed_data(dataMap):
 	import fitsio
 	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
-	gaia = fits.getdata(os.environ['BOK90PRIMEOUTDIR']+'/scamp_refs_gaia/gaia_sdssrm.fits',1)
+	gaia = fits.getdata(os.environ['BOK90PRIMEOUTDIR'] +
+	                    '/scamp_refs_gaia/gaia_sdssrm.fits',1)
 	try:
 		zeropoints = fits.getdata('zeropoints_g.fits')
 	except IOError:
@@ -345,10 +353,22 @@ def check_processed_data(dataMap):
 					status = 'bad'
 				else:
 					status = 'weird'
+				# psfNstar tells you how many catalog detections matched,
+				# which is a better indication of failures
+				nstar = zeropoints['psfNstar'][zpi,ccdi]
+				if nstar < 20:
+					status2 = 'bad'
+				elif nstar < 100:
+					status2 = 'warning'
+				else:
+					status2 = 'nominal'
 			else:
 				zp = 0.0
 				status = 'missing'
+				nstar = 0
+				status2 = 'missing'
 			rowstr += bokgnostic.html_table_entry('%.2f'%zp,status)
+			rowstr += bokgnostic.html_table_entry('%d'%nstar,status2)
 		catf = dataMap('cat')(f)
 		try:
 			m = check_img_astrom(procf,gaia,catFile=catf)
