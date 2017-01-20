@@ -159,7 +159,7 @@ lightcurves_sdss:
 lightcurves_cfht:
 	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS) --catalog cfht
 
-all_sdssref: aperphot_sdss zeropoints lightcurves_sdss
+all_sdssref: aperphot_sdss zeropoints_sdss lightcurves_sdss
 
 metadata:
 	python bokrmgnostic.py $(LOGARGS) $(UTARGS) $(BANDARGS) --metadata $(XARGS)
