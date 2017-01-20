@@ -19,6 +19,31 @@ def set_rm_defaults(args,version=pipeVersion):
 		args.obsdb = os.path.join('config','sdssrm-bok.fits.gz')
 	return args
 
+def build_headerfix_dict():
+	hdrfix = {}
+	# missing filter
+	for fn in [ 'ut20140314/bokrm.20140314.%04d' % 
+	                                      _i for _i in range(173,180) ]:
+		hdrfix[fn] = [ (0,{'FILTER':'g'}) ]
+	for fn in [ 'ut20140317/bokrm.20140317.%04d' % _i for _i in [147,153] ]:
+		hdrfix[fn] = [ (0,{'FILTER':'i'}) ]
+	for fn in [ 'ut20140318/bokrm.20140318.%04d' % _i for _i in [113] ]:
+		hdrfix[fn] = [ (0,{'FILTER':'g'}) ]
+	for fn in [ 'ut20140609/bokrm.20140609.%04d' % _i for _i in [178] ]:
+		hdrfix[fn] = [ (0,{'FILTER':'g'}) ]
+	# bad coordinates
+	fn = 'ut20140128/bokrm.20140128.0094'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08325}) for j in range(1,17) ]
+	fn = 'ut20140312/bokrm.20140312.0148'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.7042083}) for j in range(1,17) ]
+	fn = 'ut20140415/bokrm.20140415.0055'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.704375}) for j in range(1,17) ]
+	fn = 'ut20140513/bokrm.20140513.0080'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':52.227722}) for j in range(1,17) ]
+	fn = 'ut20140518/bokrm.20140518.0076'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':215.09225}) for j in range(1,17) ]
+	return hdrfix
+
 def make_obs_db(args):
 	# all Bok observations during RM nights (incl. IBRM)
 	fullObsDbFile = os.path.join('config','sdssrm-allbok.fits')
@@ -42,7 +67,7 @@ def make_obs_db(args):
 		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
 		missing = [ 'bokrm.20140609.%04d' % _i for _i in [178] ]
 		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
-		# 2. bad images
+		# 2. flag bad images
 		good = np.ones(len(obsDb),dtype=bool)
 		#       #184 telescope was moving
 		bad = [ 'd6649.%04d' % _i for _i in [184] ]
@@ -201,5 +226,6 @@ if __name__=='__main__':
 		                     dataMap.getCalDir())
 	kwargs = {}
 	kwargs['illum_filter_fun'] = IllumFilter()
+	kwargs['header_fixes'] = build_headerfix_dict()
 	bokpl.run_pipe(dataMap,args,**kwargs)
 
