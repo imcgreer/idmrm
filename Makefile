@@ -16,8 +16,8 @@ ifdef UTDATE
 	UTARGS := -u $(UTDATE)
 endif
 
-ifndef NPROC
-	NPROC := 7
+ifdef NPROC
+	MPARGS := -p 7
 endif
 
 ifndef VERBOSE
@@ -29,9 +29,9 @@ ifdef BANDS
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            -p $(NPROC) $(VERBOSE)
+            $(MPARGS) $(VERBOSE)
 
-all_detrend: initproc badpix proc1 flats proc2
+all_detrend: initproc badpix proc1 makeillum flats proc2
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:

@@ -177,13 +177,18 @@ class IllumFilter(object):
 			keep[jj[nimg>self.maxNImg]] = False
 		return keep
 
-def config_rm_data(dataMap,args):
+def config_rm_data(dataMap,args,season=None):
 	if args.band is None:
 		# set default for RM
 		dataMap.setFilters(['g','i'])
-	dataMap.setCalMap('badpix','master',fileName='BadPixMask')
-	dataMap.setCalMap('badpix4','master',fileName='BadPixMask4')
-	dataMap.setCalMap('ramp','master',fileName='BiasRamp')
+	dataMap.setFringeFilters(['i'])
+	if season:
+		sfx = '_%s' % season
+	else:
+		sfx = ''
+	dataMap.setCalMap('badpix','master',fileName='BadPixMask%s'%season)
+	dataMap.setCalMap('badpix4','master',fileName='BadPixMask%s_x4'%season)
+	dataMap.setCalMap('ramp','master',fileName='BiasRamp%s'%season)
 	return dataMap
 
 if __name__=='__main__':
@@ -221,7 +226,7 @@ if __name__=='__main__':
 		frames = load_darksky_frames('2014',filt)
 		dataMap.setFileList(frames['utDate'],frames['fileName'])
 	elif args.makebpmask:
-		build_mask_from_flat(args.makebpmask,
+		build_mask_from_flat(dataMap('cal')(args.makebpmask),
 		                     dataMap.getCalMap('badpix').getFileName(),
 		                     dataMap.getCalDir())
 	kwargs = {}
