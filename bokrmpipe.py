@@ -46,7 +46,8 @@ def build_headerfix_dict():
 
 def make_obs_db(args):
 	# all Bok observations during RM nights (incl. IBRM)
-	fullObsDbFile = os.path.join('config','sdssrm-allbok.fits')
+	fullObsDbFile = os.path.join(os.environ['BOK90PRIMERAWDIR'],
+	                             'sdssrm-allbok.fits')
 	if not os.path.exists(fullObsDbFile) or args.redo:
 		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201?????')))
 		print utDirs
