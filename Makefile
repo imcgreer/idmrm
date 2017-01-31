@@ -17,6 +17,8 @@ ifdef UTDATE
 endif
 
 ifdef NPROC
+	MPARGS := -p $(NPROC)
+else
 	MPARGS := -p 7
 endif
 
@@ -71,6 +73,7 @@ flats_illumcorr:
 	                    -s proc2 --prockey TMPPRO2 \
 	                    --nofringecorr --noskyflatcorr \
 	                    --noskysub --noweightmap \
+	                    --nodivideexptime \
 	                    --darkskyframes --tmpdirout 
 	                    $(XARGS)
 
@@ -87,6 +90,7 @@ flats_fringeskycorr:
 	                    -s proc2 --prockey TMPPRO3 \
 	                    --noillumcorr --noskyflatcorr --noweightmap \
 	                    --skymethod polynomial --skyorder 1 \
+	                    --nodivideexptime \
 	                    --darkskyframes --tmpdirin --tmpdirout 
 	                    $(XARGS)
 

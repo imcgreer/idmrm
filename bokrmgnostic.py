@@ -152,10 +152,8 @@ def load_gain_data(gfile,obsDb):
 		gdat[c][gdat[c]==0] = np.ma.masked
 	return gdat
 
-def all_gain_vals(diagdir,obsDb=None):
+def all_gain_vals(diagdir,obsDb):
 	from glob import glob
-	if obsDb is None:
-		obsDb = Table.read('config/sdssrm-bok.fits')
 	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
 	#return vstack([ load_gain_data(gfile,obsDb) for gfile in gfiles ])
 	tabs = []
@@ -166,12 +164,12 @@ def all_gain_vals(diagdir,obsDb=None):
 			pass
 	return vstack(tabs)
 
-def all_gain_plots(gainDat=None,diagdir=None,
+def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,
                    raw=False,pdfFile='bok_gain_vals.pdf'):
 	from matplotlib.backends.backend_pdf import PdfPages
 	plt.ioff()
 	if gainDat is None:
-		gainDat = all_gain_vals(diagdir)
+		gainDat = all_gain_vals(diagdir,obsDb)
 	gainDat = gainDat.group_by('utDate')
 	with PdfPages(pdfFile) as pdf:
 		for kdat,gdat in zip(gainDat.groups.keys,gainDat.groups):
@@ -703,6 +701,8 @@ if __name__=='__main__':
 	                help='calculate sky backgrounds')
 	parser.add_argument('--checkramp',action='store_true',
 	                help='check bias ramp')
+	parser.add_argument('--checkgains',action='store_true',
+	                help='generate gain correction diagnostic plots')
 	parser.add_argument('--cutouts',action='store_true',
 	                help='make image cutouts from object catalog')
 	parser.add_argument('--thumbnails',action='store_true',
@@ -725,6 +725,8 @@ if __name__=='__main__':
 		rmobs_meta_data(dataMap)
 	elif args.checkramp:
 		check_bias_ramp(dataMap)
+	elif args.checkgains:
+		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb)
 	elif args.cutouts:
 		if args.band is None:
 			raise ValueError("must specify filter (g or i)")

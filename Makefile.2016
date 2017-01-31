@@ -11,5 +11,5 @@ ifndef PROCARGS
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            -p $(NPROC) $(VERBOSE)
+            $(MPARGS) $(VERBOSE)
 

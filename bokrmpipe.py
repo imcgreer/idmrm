@@ -187,9 +187,9 @@ def config_rm_data(dataMap,args,season=None):
 		sfx = '_%s' % season
 	else:
 		sfx = ''
-	dataMap.setCalMap('badpix','master',fileName='BadPixMask%s'%season)
-	dataMap.setCalMap('badpix4','master',fileName='BadPixMask%s_x4'%season)
-	dataMap.setCalMap('ramp','master',fileName='BiasRamp%s'%season)
+	dataMap.setCalMap('badpix','master',fileName='BadPixMask%s'%sfx)
+	dataMap.setCalMap('badpix4','master',fileName='BadPixMask%s_x4'%sfx)
+	dataMap.setCalMap('ramp','master',fileName='BiasRamp%s'%sfx)
 	return dataMap
 
 if __name__=='__main__':

@@ -13,7 +13,7 @@ ifndef PROCARGS
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            -p $(NPROC) $(VERBOSE)
+            $(MPARGS) $(VERBOSE)
 
 
 # run the pipeline on g-band dark night to look at CCD3 gradient by only doing
@@ -39,23 +39,27 @@ testgradient_forgnostic:
 	                    --nogainmul --nocombine --nosavegain \
 	                    --noweightmap --tmpdirout -R
 
-testfringe:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s fringe \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
+# test creating fringe master
+# step 1: do illumination correction only
+testfringe_initproc:
+	make proc2 UTDATE=20140425 \
+	         XARGS="--prockey TMPPRO2 --nofringecorr --noskyflatcorr \
+	                --noskysub --noweightmap --nodivideexptime \
+	                --tmpdirout -R"
+# step 2: make a fringe master from a single night
+testfringe_makefringe:
+	make steps STEPS=fringe UTDATE=20140425 \
+	         XARGS="--tmpdirin --tmpdirout"
+# step 3: do fringe subtraction
+testfringe_applyfringe:
+	make proc2 UTDATE=20140425 \
+	         XARGS="--prockey TMPPRO3 --noillumcorr --noskyflatcorr \
+	                --noskysub --noweightmap --nodivideexptime \
+	                --tmpdirin --tmpdirout -R"
 
-footestfringecont:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc1 --prockey TMPPROC \
-	                    --norampcorr --nobiascorr --nosavegain --noweightmap \
-	                    --darkskyframes --tmpdirout $(XARGS)
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc2 \
-	                    --noskyflatcorr --noweightmap \
-	                    --skymethod polynomial --skyorder 1 \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
-testfringecont:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s skyflat \
-	                    --darkskyframes --tmpdirin --tmpdirout $(XARGS)
+# test fringe scaling on a single image
+testfringe_checkscale:
+	python $(BOKTOOLS)/bokbackground.py $(IMAGE) -f ccdmedian -o atmpback.fits
+	python $(BOKTOOLS)/bokimarith.py $(IMAGE) - atmpback.fits -o atmpsub.fits
+	python $(BOKTOOLS)/bokimarith.py atmpsub.fits / $(FRINGEIM) -o atmpfrg.fits
 
