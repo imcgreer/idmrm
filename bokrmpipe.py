@@ -34,14 +34,24 @@ def build_headerfix_dict():
 	# bad coordinates
 	fn = 'ut20140128/bokrm.20140128.0094'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08325}) for j in range(1,17) ]
+	fn = 'ut20140129/bokrm.20140129.0103'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08322}) for j in range(1,17) ]
+	fn = 'ut20140219/bokrm.20140219.0136'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.7042917}) for j in range(1,17) ]
 	fn = 'ut20140312/bokrm.20140312.0148'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.7042083}) for j in range(1,17) ]
 	fn = 'ut20140415/bokrm.20140415.0055'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.704375}) for j in range(1,17) ]
+	fn = 'ut20140416/bokrm.20140416.0148'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.083305}) for j in range(1,17) ]
 	fn = 'ut20140513/bokrm.20140513.0080'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':52.227722}) for j in range(1,17) ]
 	fn = 'ut20140518/bokrm.20140518.0076'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':215.09225}) for j in range(1,17) ]
+	fn = 'ut20140518/bokrm.20140518.0118'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.70442}) for j in range(1,17) ]
+	fn = 'ut20140518/bokrm.20140518.0130'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':215.09221}) for j in range(1,17) ]
 	return hdrfix
 
 def make_obs_db(args):
@@ -80,6 +90,12 @@ def make_obs_db(args):
 		#       first survey image was 300s and way overexposed
 		bad = [ 'bokrm.20140114.%04d' % _i for _i in [1] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       trailed image
+		bad = [ 'bok.20140115.%04d' % _i for _i in [3] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       trailed image
+		bad = [ 'bokrm.20140123.%04d' % _i for _i in [201] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       lots of passing clouds with saturated ims this night
 		bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,144,145,146,147,
 		                                              150,152,153,158] ]
@@ -93,6 +109,9 @@ def make_obs_db(args):
 		#       #26 flat is truncated, passing clouds
 		bad = [ 'bokrm.20140319.%04d' % _i for _i in [26,51,52,53,54,55,
 		                                              56,57,58,59,60] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       trailed image
+		bad = [ 'bokrm.20140514.%04d' % _i for _i in [104,116] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #181 telescope was moving
 		bad = [ 'bokrm.20140609.%04d' % _i for _i in [181] ]
