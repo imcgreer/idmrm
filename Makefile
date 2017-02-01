@@ -23,17 +23,21 @@ else
 endif
 
 ifndef VERBOSE
-	VERBOSE := -vvvv
+	VERBOSE := -v
 endif
 
 ifdef BANDS
 	BANDARGS := -b $(BANDS)
 endif
 
-INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            $(MPARGS) $(VERBOSE)
+DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) 
+
+INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 
 all_detrend: initproc badpix proc1 makeillum flats proc2
+
+obsdb:
+	python bokrmpipe.py --makeobsdb $(LOGARGS) $(DATAARGS) -R
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:
