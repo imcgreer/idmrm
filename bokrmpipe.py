@@ -36,6 +36,8 @@ def build_headerfix_dict():
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08325}) for j in range(1,17) ]
 	fn = 'ut20140129/bokrm.20140129.0103'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08322}) for j in range(1,17) ]
+	fn = 'ut20140215/bokrm.20140215.0116'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.704375}) for j in range(1,17) ]
 	fn = 'ut20140219/bokrm.20140219.0136'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.7042917}) for j in range(1,17) ]
 	fn = 'ut20140312/bokrm.20140312.0148'
