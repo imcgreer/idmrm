@@ -245,7 +245,11 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		hdr = imFits[ccd].header
 		if ahead is not None:
 			hdr.update(ahead[ccd-1].items())
-		w = WCS(hdr)
+		try:
+			w = WCS(hdr)
+		except:
+			rv.append(None)
+			continue
 		foot = w.calc_footprint()
 		ras = sorted(foot[:,0])
 		decs = sorted(foot[:,1])
@@ -307,7 +311,7 @@ def check_processed_data(dataMap):
 	gaia = fits.getdata(os.environ['BOK90PRIMEOUTDIR'] +
 	                    '/scamp_refs_gaia/gaia_sdssrm.fits',1)
 	try:
-		zeropoints = fits.getdata('zeropoints_g.fits')
+		zeropoints = fits.getdata('bokrm_zeropoints.fits')
 	except IOError:
 		zeropoints = None
 	tabf = open(os.path.join('proc_diag.html'),'w')
@@ -316,6 +320,7 @@ def check_processed_data(dataMap):
 	files_and_frames = dataMap.getFiles(imType='object',with_frames=True)
 	for f,i in zip(*files_and_frames):
 		frameId = dataMap.obsDb['frameIndex'][i]
+		filt = dataMap.obsDb['filter'][i]
 		rowstr = ''
 		procf = dataMap('proc2')(f)
 		rowstr += bokgnostic.html_table_entry('%d'%frameId,'nominal')
@@ -343,11 +348,11 @@ def check_processed_data(dataMap):
 		for ccdi in range(4):
 			if zpi is not None:
 				zp = zeropoints['aperZp'][zpi,ccdi]
-				if zp > 25.90:
+				if zp > bokrmphot.zp_phot_nominal[filt]:
 					status = 'nominal'
-				elif zp > 25.70:
+				elif zp > bokrmphot.zp_phot_nominal[filt]-0.2:
 					status = 'warning'
-				elif zp > 25.40:
+				elif zp > bokrmphot.zp_phot_nominal[filt]-0.5:
 					status = 'bad'
 				else:
 					status = 'weird'
@@ -371,6 +376,9 @@ def check_processed_data(dataMap):
 		try:
 			m = check_img_astrom(procf,gaia,catFile=catf)
 			for c in m:
+				if c is None:
+					rowstr += bokgnostic.html_table_entry('BAD','bad')
+					continue
 				sep = np.median(c['sep'])
 				if sep > 0.4:
 					status = 'bad'

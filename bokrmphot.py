@@ -12,11 +12,14 @@ from astropy.wcs import InconsistentAxisTypesError
 from bokpipe import bokphot,bokpl,bokproc,bokutil
 import bokrmpipe
 
+# Nominal limits to classify night as "photometric"
+zp_phot_nominal = {'g':25.90,'i':25.40}
+
 def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
                 inp,**kwargs):
 	utd,filt = inp
 	redo = kwargs.pop('redo',False)
-	fn = '.'.join([catPfx,utd,filt,'cat','fits'])
+	fn = '.'.join([catPfx+'_aper',utd,filt,'cat','fits'])
 	catFile = os.path.join(catDir,fn)
 	if os.path.exists(catFile) and not redo:
 		print catFile,' already exists, skipping'
@@ -42,7 +45,7 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 		expTime = fits.getheader(imageFile,0)['EXPTIME']
 		varIm = bokpl.make_variance_image(dataMap,f,bpMask,
 		                                  expTime,gains,skyAdu)
-		print 'aperture photometering ',imageFile
+		bokutil.mplog('aperture photometering '+f)
 		try:
 			phot = bokphot.aper_phot_image(imageFile,
 			                               refCat['ra'],refCat['dec'],
@@ -50,10 +53,10 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 			                               aHeadFile=aHeadFile,
 			                               **kwargs)
 		except InconsistentAxisTypesError:
-			print 'WCS FAILED!!!'
+			print 'WCS FAILED!!! ',f
 			continue
 		if phot is None:
-			print 'no apertures found!!!!'
+			print 'no apertures found!!!! ',f
 			continue
 		phot['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
 		allPhot.append(phot)
@@ -89,25 +92,22 @@ def load_full_ref_cat(phot,band='g',magRange=(17.,20.)):
 	t = t.group_by('objId')
 	return t
 
-def calc_color_terms(t,doplots=False,savefit=False):
+def calc_color_terms(t,band,aperNum=-2,ref='sdss',airmassLim=1.2,
+                     doplots=False,savefit=False):
 	cdir = os.environ['BOKRMDIR']
-	b = 'g'
-	aperNum = -2
-	zpLim = 25.9
-	ref = 'sdss'
-	airmassLim = 1.2
+	zpLim = {'g':25.9,'i':25.4}
 	extCorr = {'g':0.17,'i':0.06} # SDSS values, should be close enough
 	ii = np.arange(len(t))
 	ccdj = t['ccdNum'] = 1
 	mag = np.ma.array(t['counts'][:,aperNum],
 	                  mask=((t['flags'][:,aperNum] > 0) |
 	                        (t['countsErr'][:,aperNum] <= 0) |
-	                        (t['aperZp'][ii,ccdj] <= zpLim) |
+	                        (t['aperZp'][ii,ccdj] <= zpLim[band]) |
 	                        (t['psfNstar'][ii,ccdj] < 100) |
 	                        (t['fwhmPix'][ii,ccdj] > 4.0) |
 	                        (t['airmass'] > airmassLim)))
-	mag = -2.5*np.ma.log10(mag) - extCorr[b]*t['airmass']
-	refmag = t[b]
+	mag = -2.5*np.ma.log10(mag) - extCorr[band]*t['airmass']
+	refmag = t[band]
 	dmag = sigma_clip(mag-refmag)
 	zp0 = dmag.mean()
 	bokmag = mag - zp0
@@ -123,7 +123,7 @@ def calc_color_terms(t,doplots=False,savefit=False):
 		magoff = sigma_clip(dmag-np.polyval(cterms,refclr))
 		mask = magoff.mask
 	if savefit:
-		np.savetxt(cdir+'/config/bok2%s_%s_gicoeff.dat'%(ref,b),cterms)
+		np.savetxt(cdir+'/config/bok2%s_%s_gicoeff.dat'%(ref,band),cterms)
 	if doplots:
 		import matplotlib.pyplot as plt
 		from matplotlib import ticker
@@ -136,7 +136,7 @@ def calc_color_terms(t,doplots=False,savefit=False):
 		           cmap=plt.get_cmap('gray_r'),bins='log')
 		ax1.axhline(0,c='c')
 		xx = np.linspace(-1,5,100)
-		if True and b=='g':
+		if True and band=='g':
 			desicterms = np.loadtxt(os.path.join(os.environ['BOKPIPE'],
 			                        '..','survey','config',
 			                        'bok2sdss_g_gicoeff.dat'))
@@ -144,12 +144,12 @@ def calc_color_terms(t,doplots=False,savefit=False):
 			ax1.plot(xx[::3],np.polyval(desicterms,xx[::3]),'--',
 			         c='orange',alpha=0.7)
 		ax1.plot(xx,np.polyval(cterms,xx),c='r')
-		ax1.set_ylabel('%s(Bok) - %s(%s)'%(b,b,ref.upper()))
+		ax1.set_ylabel('%s(Bok) - %s(%s)'%(band,band,ref.upper()))
 		ax1.set_ylim(-0.25,0.25)
 		order = len(cterms)-1
 		polystr = ' '.join(['%+.5f*%s^%d'%(c,'gi',order-d) 
 		                      for d,c in enumerate(cterms)])
-		ax1.set_title(('$%s(Bok) - %s(%s) = '%(b,b,ref.upper())) +
+		ax1.set_title(('$%s(Bok) - %s(%s) = '%(band,band,ref.upper())) +
 		              polystr+'$',size=14)
 		ax2 = fig.add_subplot(212)
 		ax2.hexbin(refclr[ii],dmag[ii]-np.polyval(cterms,refclr[ii]),
@@ -172,7 +172,7 @@ def calc_color_terms(t,doplots=False,savefit=False):
 			ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.1))
 			ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.02))
 		if False:
-			fig.savefig('%s_%s_to_bok_gicolors.png'%(b,ref))
+			fig.savefig('%s_%s_to_bok_gicolors.png'%(band,ref))
 
 def srcor(ra1,dec1,ra2,dec2,sep):
 	from astropy.coordinates import SkyCoord,match_coordinates_sky
@@ -187,12 +187,13 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	utd,filt = inp
 	is_mag = ( (sdss[filt]>=magRange[0]) & (sdss[filt]<=magRange[1]) )
 	ref_ii = np.where(is_mag)[0]
-	print 'calculating zero points for ',utd
-	aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
+	aperCatFn = '.'.join([pfx+'_aper',utd,filt,'cat','fits'])
 	files,frames = dataMap.getFiles(imType='object',utd=utd,filt=filt,
 	                                with_frames=True)
 	if files is None:
 		return None
+	bokutil.mplog('calculating zero points for %s [%d images]' % 
+	               (utd,len(files)))
 	aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
 	nAper = aperCat['counts'].shape[-1]
 	aperCorrs = np.zeros((len(frames),nAper,4),dtype=np.float32)
@@ -263,7 +264,7 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	            dtype=('S8','i4','f4','i4','f4','i4','f4'))
 	return tab
 
-def zero_points(dataMap,procmap,refCat,magRange=(17.,19.5),aperNum=-2):
+def zero_points(dataMap,procmap,refCat,magRange=(17.,20.5),aperNum=-2):
 	aperCatDir = os.path.join(dataMap.procDir,'catalogs')
 	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
 	                         for filt in dataMap.iterFilters() ]
@@ -272,7 +273,7 @@ def zero_points(dataMap,procmap,refCat,magRange=(17.,19.5),aperNum=-2):
 	                      magRange,aperNum)
 	tabs = procmap(p_zp_worker,utdlist)
 	tab = vstack(filter(None,tabs))
-	tab.write('zeropoints_%s.fits'%filt,overwrite=True)
+	tab.write('bokrm_zeropoints.fits',overwrite=True)
 
 def match_to(ids1,ids2):
 	idx = { j:i for i,j in enumerate(ids2) }
@@ -296,62 +297,60 @@ def _read_old_catf(obsDb,catf):
 	return t
 
 def construct_lightcurves(dataMap,refCat,old=False):
+	pfx = refCat['filePrefix']
 	if old:
-		pfx = refCat['filePrefix']
 		# renaming
-		pfx = {'bokrm_sdss':'sdssbright'}.get(pfx,pfx)
+		pfx = {'sdssstars':'sdssbright'}.get(pfx,pfx)
 		aperCatDir = os.environ['HOME']+'/data/projects/SDSS-RM/rmreduce/catalogs_v2b/'
 		lcFn = lambda filt: 'lightcurves_%s_%s_old.fits' % (pfx,filt)
 	else:
-		pfx = refCat['filePrefix']
 		aperCatDir = os.path.join(dataMap.procDir,'catalogs')
-		lcFn = lambda filt: 'lightcurves_%s_%s.fits' % (pfx,filt)
-	for filt in dataMap.iterFilters():
-		allTabs = []
-		for utd in dataMap.iterUtDates():
+		lcFn = 'bokrmphot_%s.fits' % refCat['filePrefix']
+	allTabs = []
+	for utd in dataMap.iterUtDates():
+		print 'loading catalogs from ',utd
+		for filt in dataMap.iterFilters():
 			if old and utd=='20131223':
 				utd = '20131222'
-			print 'loading catalogs from ',utd
-			aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
+			aperCatFn = '.'.join([pfx+'_aper',utd,filt,'cat','fits'])
 			aperCatF = os.path.join(aperCatDir,aperCatFn)
 			if os.path.exists(aperCatF):
 				if old:
 					tab = _read_old_catf(dataMap.obsDb,aperCatF)
 				else:
 					tab = Table.read(aperCatF)
+				tab['filter'] = filt # handy to save this here
 				allTabs.append(tab)
-		tab = vstack(allTabs)
-		print 'stacked aperture phot catalogs into table with ',
-		print len(tab),' rows'
-		tab.sort(['objId','frameIndex'])
-		ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
-		#expTime = dataMap.obsDb['expTime'][ii][:,np.newaxis]
-		try:
-			apDat = Table.read('zeropoints_%s.fits'%filt)
-			ii = match_to(tab['frameIndex'],apDat['frameIndex'])
-			nAper = tab['counts'].shape[-1]
-			apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
-			# cannot for the life of me figure out how to do this with indexing
-			for apNum in range(nAper):
-				apCorr[np.arange(len(ii)),apNum] = \
-				            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
-			zp = apDat['aperZp'][ii]
-			zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
-			corrCps = tab['counts'] * apCorr 
-			magAB = zp - 2.5*np.ma.log10(np.ma.masked_array(corrCps,
-			                                           mask=tab['counts']<=0))
-			tab['aperMag'] = magAB.filled(99.99)
-			tab['aperMagErr'] = 1.0856*tab['countsErr']/tab['counts']
-			# convert AB mag to nanomaggie
-			fluxConv = 10**(-0.4*(zp-22.5))
-			tab['aperFlux'] = corrCps * fluxConv
-			tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
-		except IOError:
-			pass
-		ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
-		tab['airmass'] = dataMap.obsDb['airmass'][ii]
-		tab['mjd'] = dataMap.obsDb['mjd'][ii]
-		tab.write(lcFn(filt),overwrite=True)
+	#
+	tab = vstack(allTabs)
+	print 'stacked aperture phot catalogs into table with ',len(tab),' rows'
+	tab.sort(['objId','frameIndex'])
+	try:
+		apDat = Table.read('bokrm_zeropoints.fits')
+		ii = match_to(tab['frameIndex'],apDat['frameIndex'])
+		nAper = tab['counts'].shape[-1]
+		apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
+		# cannot for the life of me figure out how to do this with indexing
+		for apNum in range(nAper):
+			apCorr[np.arange(len(ii)),apNum] = \
+			            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
+		zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<50)
+		zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
+		corrCps = tab['counts'] * apCorr 
+		poscounts = np.ma.array(corrCps,mask=tab['counts']<=0)
+		magAB = zp - 2.5*np.ma.log10(poscounts)
+		tab['aperMag'] = magAB.filled(99.99)
+		tab['aperMagErr'] = 1.0856*np.ma.divide(tab['countsErr'],poscounts)
+		# convert AB mag to nanomaggie
+		fluxConv = 10**(-0.4*(zp-22.5))
+		tab['aperFlux'] = corrCps * fluxConv
+		tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
+	except IOError:
+		pass
+	ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
+	tab['airmass'] = dataMap.obsDb['airmass'][ii]
+	tab['mjd'] = dataMap.obsDb['mjd'][ii]
+	tab.write(lcFn,overwrite=True)
 
 def nightly_lightcurves(catName,lcs=None,redo=False):
 	from collections import defaultdict
@@ -411,18 +410,22 @@ def load_catalog(catName):
 		cat = Table.read(os.path.join(dataDir,'target_fibermap.fits'),1)
 		cat.rename_column('RA','ra')
 		cat.rename_column('DEC','dec')
-		catPfx = 'bokrm'
+		catPfx = 'rmqso'
+	elif catName == 'allqsos':
+		cat = Table.read(os.path.join(dataDir,
+		                              'allqsos_rmfield_phot_dr12.fits'),1)
+		catPfx = 'allqso'
 	elif catName == 'sdss':
 		catfn = os.path.join('.','data','sdssRefStars_DR13.fits.gz')
 		print 'loading references from sdssRefStars_DR13.fits.gz'
 		cat = Table.read(catfn,1)
-		catPfx = 'bokrm_sdss'
+		catPfx = 'sdssstars'
 	elif catName == 'sdssold':
 		cat = Table.read(os.path.join(dataDir,'sdss.fits'),1)
-		catPfx = 'bokrm_sdssold'
+		catPfx = 'sdssstarsold'
 	elif catName == 'cfht':
 		cat = Table.read(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
-		catPfx = 'bokrm_cfht'
+		catPfx = 'cfhtstars'
 	return dict(catalog=cat,filePrefix=catPfx)
 
 if __name__=='__main__':
