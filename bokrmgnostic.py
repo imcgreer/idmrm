@@ -272,7 +272,7 @@ def rmobs_meta_data(dataMap):
 	bokgnostic.obs_meta_data(dataMap,outFile=tabf)
 	tab = Table.read(tabf)
 	for b in 'g':
-		zpdat = Table.read('zeropoints_%s.fits' % b)
+		zpdat = Table.read('bokrm_zeropoints.fits')
 		del zpdat['utDate']
 		tab = join(tab,zpdat,'frameIndex','left')
 	tab.write(tabf,overwrite=True)
