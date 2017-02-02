@@ -299,7 +299,7 @@ def _read_old_catf(obsDb,catf):
 	                 'ccdNum','frameIndex'))
 	return t
 
-def construct_lightcurves(dataMap,refCat,old=False):
+def stack_catalogs(dataMap,refCat,old=False):
 	pfx = refCat['filePrefix']
 	if old:
 		# renaming
@@ -308,7 +308,6 @@ def construct_lightcurves(dataMap,refCat,old=False):
 		lcFn = lambda filt: 'lightcurves_%s_%s_old.fits' % (pfx,filt)
 	else:
 		aperCatDir = os.path.join(dataMap.procDir,'catalogs')
-		lcFn = 'bokrmphot_%s.fits' % refCat['filePrefix']
 	allTabs = []
 	for utd in dataMap.iterUtDates():
 		print 'loading catalogs from ',utd
@@ -328,32 +327,39 @@ def construct_lightcurves(dataMap,refCat,old=False):
 	tab = vstack(allTabs)
 	print 'stacked aperture phot catalogs into table with ',len(tab),' rows'
 	tab.sort(['objId','frameIndex'])
-	try:
-		apDat = Table.read('bokrm_zeropoints.fits')
-		ii = match_to(tab['frameIndex'],apDat['frameIndex'])
-		nAper = tab['counts'].shape[-1]
-		apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
-		# cannot for the life of me figure out how to do this with indexing
-		for apNum in range(nAper):
-			apCorr[np.arange(len(ii)),apNum] = \
-			            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
-		zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<50)
-		zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
-		corrCps = tab['counts'] * apCorr 
-		poscounts = np.ma.array(corrCps,mask=tab['counts']<=0)
-		magAB = zp - 2.5*np.ma.log10(poscounts)
-		tab['aperMag'] = magAB.filled(99.99)
-		tab['aperMagErr'] = 1.0856*np.ma.divide(tab['countsErr'],poscounts)
-		# convert AB mag to nanomaggie
-		fluxConv = 10**(-0.4*(zp-22.5))
-		tab['aperFlux'] = corrCps * fluxConv
-		tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
-	except IOError:
-		pass
+	return tab
+
+def calibrate_lightcurves(lcTab,dataMap,refCat,
+                          zpFile='bokrm_zeropoints.fits',outfn=None):
+	if outfn is None:
+		outfn = 'bokrmphot_%s.fits' % refCat['filePrefix']
+	if lcTab is None:
+		tab = stack_catalogs(dataMap,refCat)
+	else:
+		tab = lcTab
+	apDat = Table.read(zpFile)
+	ii = match_to(tab['frameIndex'],apDat['frameIndex'])
+	nAper = tab['counts'].shape[-1]
+	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
+	# cannot for the life of me figure out how to do this with indexing
+	for apNum in range(nAper):
+		apCorr[np.arange(len(ii)),apNum] = \
+		            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
+	zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<50)
+	zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
+	corrCps = tab['counts'] * apCorr 
+	poscounts = np.ma.array(corrCps,mask=tab['counts']<=0)
+	magAB = zp - 2.5*np.ma.log10(poscounts)
+	tab['aperMag'] = magAB.filled(99.99)
+	tab['aperMagErr'] = 1.0856*np.ma.divide(tab['countsErr'],poscounts)
+	# convert AB mag to nanomaggie
+	fluxConv = 10**(-0.4*(zp-22.5))
+	tab['aperFlux'] = corrCps * fluxConv
+	tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
 	ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
 	tab['airmass'] = dataMap.obsDb['airmass'][ii]
 	tab['mjd'] = dataMap.obsDb['mjd'][ii]
-	tab.write(lcFn,overwrite=True)
+	tab.write(outfn,overwrite=True)
 
 def nightly_lightcurves(catName,lcs=None,redo=False):
 	from collections import defaultdict
@@ -419,7 +425,8 @@ def load_catalog(catName):
 		                              'allqsos_rmfield_phot_dr12.fits'),1)
 		catPfx = 'allqso'
 	elif catName == 'sdss':
-		catfn = os.path.join('.','data','sdssRefStars_DR13.fits.gz')
+		rmdir = os.environ['BOKRMDIR']
+		catfn = os.path.join(rmdir,'data','sdssRefStars_DR13.fits.gz')
 		print 'loading references from sdssRefStars_DR13.fits.gz'
 		cat = Table.read(catfn,1)
 		catPfx = 'sdssstars'
@@ -429,6 +436,8 @@ def load_catalog(catName):
 	elif catName == 'cfht':
 		cat = Table.read(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
 		catPfx = 'cfhtstars'
+	else:
+		raise ValueError
 	return dict(catalog=cat,filePrefix=catPfx)
 
 if __name__=='__main__':
@@ -453,6 +462,12 @@ if __name__=='__main__':
 	                help='use 2014 catalogs for comparison')
 	parser.add_argument('-v','--verbose',action='count',
 	                    help='increase output verbosity')
+	parser.add_argument('--lctable',type=str,
+	                help='lightcurve table')
+	parser.add_argument('--zptable',type=str,default='bokrm_zeropoints.fits',
+	                help='zeropoints table')
+	parser.add_argument('--outfile',type=str,
+	                help='output file')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -469,7 +484,12 @@ if __name__=='__main__':
 		              background=args.background)
 		timerLog('aper phot')
 	elif args.lightcurves:
-		construct_lightcurves(dataMap,refCat,old=args.old)
+		if args.lctable:
+			lcTab = Table.read(args.lctable)
+		else:
+			lcTab = None
+		calibrate_lightcurves(lcTab,dataMap,refCat,zpFile=args.zptable,
+		                      outfn=args.outfile)#,old=args.old)
 		timerLog('lightcurves')
 	elif args.nightly:
 		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
