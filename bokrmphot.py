@@ -78,41 +78,44 @@ def aperture_phot(dataMap,refCat,procmap,inputType='sky',**kwargs):
 	                        aperRad,refCat,catDir,catPfx,**kwargs)
 	procmap(p_aper_worker,utdlist)
 
-def load_full_ref_cat(phot,band='g',magRange=(17.,20.)):
-	#phot = Table.read('lightcurves_bokrm_sdss_%s.fits'%band)
+def load_full_ref_cat(phot,magRange=(17.,20.)):
 	cdir = os.environ['BOKRMDIR']
 	sdssRef = Table.read(cdir+'/data/sdssRefStars_DR13.fits.gz')
-	obsLog = Table.read(cdir+'/config/sdssrm-bok.fits.gz')
 	metaDat = Table.read(cdir+'/data/BokRMFrameList.fits.gz')
-	t = join(phot,sdssRef['objId','g','i'],keys='objId',join_type='left')
-	t = t[(t[band]>magRange[0])&(t[band]<=magRange[1])]
-	t = join(t,obsLog['frameIndex','filter'],
-	         keys='frameIndex',join_type='left')
-	t = join(t,metaDat,keys='frameIndex',join_type='left')
-	t = t.group_by('objId')
+	isgrange = (sdssRef['g']>magRange[0]) & (sdssRef['g']<=magRange[1])
+	isirange = (sdssRef['i']>magRange[0]) & (sdssRef['i']<=magRange[1])
+	sdssRef = sdssRef[isgrange|isirange]
+	t = join(phot,sdssRef['objId','g','i'],keys='objId')
+	t = join(t,metaDat['frameIndex','aperZp','psfNstar','fwhmPix'],
+	         keys='frameIndex')
 	return t
 
 def calc_color_terms(t,band,aperNum=-2,ref='sdss',airmassLim=1.2,
+                     magRange=(17.,20.),colorRange=(0.4,3.0),
                      doplots=False,savefit=False):
 	cdir = os.environ['BOKRMDIR']
-	zpLim = {'g':25.9,'i':25.4}
+	zpLim = zp_phot_nominal
 	extCorr = {'g':0.17,'i':0.06} # SDSS values, should be close enough
 	ii = np.arange(len(t))
 	ccdj = t['ccdNum'] = 1
+	refmag = t[band]
+	refclr = t['g'] - t['i']
+	inmag = (refmag > magRange[0]) & (refmag < magRange[1])
+	incolor = (refclr > colorRange[0]) & (refclr < colorRange[1])
 	mag = np.ma.array(t['counts'][:,aperNum],
 	                  mask=((t['flags'][:,aperNum] > 0) |
+	                        (t['filter'] != band) |
 	                        (t['countsErr'][:,aperNum] <= 0) |
 	                        (t['aperZp'][ii,ccdj] <= zpLim[band]) |
 	                        (t['psfNstar'][ii,ccdj] < 100) |
 	                        (t['fwhmPix'][ii,ccdj] > 4.0) |
-	                        (t['airmass'] > airmassLim)))
+	                        (t['airmass'] > airmassLim) |
+	                        ~inmag | ~incolor))
 	mag = -2.5*np.ma.log10(mag) - extCorr[band]*t['airmass']
-	refmag = t[band]
 	dmag = sigma_clip(mag-refmag)
 	zp0 = dmag.mean()
 	bokmag = mag - zp0
 	dmag = bokmag - refmag
-	refclr = t['g'] - t['i']
 	# iteratively fit a polynomial of increasing order to the
 	# magnitude differences
 	mask = np.abs(dmag) > 0.25
@@ -160,9 +163,9 @@ def calc_color_terms(t,band,aperNum=-2,ref='sdss',airmassLim=1.2,
 		for ax in [ax1,ax2]:
 			if ref=='sdss':
 				ax.axvline(0.4,c='b')
-				ax.axvline(3.7,c='b')
+				ax.axvline(3.0,c='b')
 				ax.set_xlabel('SDSS g-i')
-				ax.set_xlim(-0.05,3.9)
+				ax.set_xlim(-0.05,3.3)
 			else:
 				ax.axvline(0.4,c='b')
 				ax.axvline(2.7,c='b')
