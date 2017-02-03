@@ -346,16 +346,16 @@ def stack_catalogs(dataMap,refCat,old=False):
 		# renaming
 		pfx = {'sdssstars':'sdssbright'}.get(pfx,pfx)
 		aperCatDir = os.environ['HOME']+'/data/projects/SDSS-RM/rmreduce/catalogs_v2b/'
-		lcFn = lambda filt: 'lightcurves_%s_%s_old.fits' % (pfx,filt)
 	else:
 		aperCatDir = os.path.join(dataMap.procDir,'catalogs')
+		pfx = pfx+'_aper'
 	allTabs = []
 	for utd in dataMap.iterUtDates():
 		print 'loading catalogs from ',utd
 		for filt in dataMap.iterFilters():
 			if old and utd=='20131223':
 				utd = '20131222'
-			aperCatFn = '.'.join([pfx+'_aper',utd,filt,'cat','fits'])
+			aperCatFn = '.'.join([pfx,utd,filt,'cat','fits'])
 			aperCatF = os.path.join(aperCatDir,aperCatFn)
 			if os.path.exists(aperCatF):
 				if old:
