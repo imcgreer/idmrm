@@ -5,7 +5,7 @@ import numpy as np
 import multiprocessing
 from functools import partial
 from astropy.io import fits
-from astropy.table import Table,vstack,join
+from astropy.table import Table,vstack,hstack,join
 from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
 
@@ -14,6 +14,24 @@ import bokrmpipe
 
 # Nominal limits to classify night as "photometric"
 zp_phot_nominal = {'g':25.90,'i':25.40}
+
+def mapframes(ids1,ids2):
+	ii = -np.ones(ids2.max()+1,dtype=int)
+	ii[ids2] = np.arange(len(ids2))
+	return ii[ids1]
+
+def join_by_id(tab1,tab2,idkey):
+	ii = mapframes(tab1[idkey],tab2[idkey])
+	# avoid duplication
+	tab2 = tab2.copy()
+	del tab2[idkey]
+	return hstack(tab1,tab2[ii])
+
+def join_by_frameid(tab1,tab2):
+	return join_by_id(tab1,tab2,'frameIndex')
+
+def join_by_objid(tab1,tab2):
+	return join_by_id(tab1,tab2,'objId')
 
 def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
                 inp,**kwargs):
@@ -85,9 +103,11 @@ def load_full_ref_cat(phot,magRange=(17.,20.)):
 	isgrange = (sdssRef['g']>magRange[0]) & (sdssRef['g']<=magRange[1])
 	isirange = (sdssRef['i']>magRange[0]) & (sdssRef['i']<=magRange[1])
 	sdssRef = sdssRef[isgrange|isirange]
-	t = join(phot,sdssRef['objId','g','i'],keys='objId')
-	t = join(t,metaDat['frameIndex','aperZp','psfNstar','fwhmPix'],
-	         keys='frameIndex')
+	t = join_by_objid(phot,sdssRef['objId','g','i'])
+	t = join_by_frameid(t,metaDat['frameIndex','aperZp','psfNstar','fwhmPix'])
+#	t = join(phot,sdssRef['objId','g','i'],keys='objId')
+#	t = join(t,metaDat['frameIndex','aperZp','psfNstar','fwhmPix'],
+#	         keys='frameIndex')
 	return t
 
 def calc_color_terms(t,band,aperNum=-2,ref='sdss',airmassLim=1.2,
@@ -186,8 +206,20 @@ def srcor(ra1,dec1,ra2,dec2,sep):
 	ii = np.where(d2d.arcsec < sep)[0]
 	return ii,idx[ii],d2d.arcsec[ii]
 
+class Sdss2BokTransform(object):
+	colorMin = 0.4
+	colorMax = 3.0
+	def __init__(self,band):
+		self.colorTerms = np.loadtxt('config/bok2sdss_%s_gicoeff.dat'%band)
+	def __call__(self,mags,colors):
+		corrMags = mags + np.polyval(self.colorTerms,colors)
+		corrMags = np.ma.array(corrMags,
+		                  mask=(colors<self.colorMin)|(colors>self.colorMax))
+		return corrMags
+
 def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	utd,filt = inp
+	applyColorCorrection = True
 	is_mag = ( (sdss[filt]>=magRange[0]) & (sdss[filt]<=magRange[1]) )
 	ref_ii = np.where(is_mag)[0]
 	aperCatFn = '.'.join([pfx+'_aper',utd,filt,'cat','fits'])
@@ -197,10 +229,12 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 		return None
 	bokutil.mplog('calculating zero points for %s [%d images]' % 
 	               (utd,len(files)))
+	sdss2bok = Sdss2BokTransform(filt)
 	aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
 	nAper = aperCat['counts'].shape[-1]
 	aperCorrs = np.zeros((len(frames),nAper,4),dtype=np.float32)
 	aperZps = np.zeros((len(frames),4),dtype=np.float32)
+	aperZpRms = np.zeros((len(frames),4),dtype=np.float32)
 	aperNstar = np.zeros((len(frames),4),dtype=np.int32)
 	psfZps = np.zeros_like(aperZps)
 	psfNstar = np.zeros_like(aperNstar)
@@ -224,11 +258,19 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 				            aperCat['counts'][ii[c],aperNum],mask=mask)
 				aperMags = -2.5*np.ma.log10(counts)
 				snr = counts / aperCat['countsErr'][ii[c],aperNum]
-				refMags = sdss[filt][aperCat['objId'][ii[c]]]
-				dMag = sigma_clip(refMags - aperMags)
-				zp = np.ma.average(dMag,weights=snr**2)
+				aperMags[snr<15] = np.ma.masked
+				jj = aperCat['objId'][ii[c]]
+				refMags = sdss[filt][jj]
+				if applyColorCorrection:
+					refMags = sdss2bok(refMags,sdss['g'][jj]-sdss['i'][jj])
+				dMag = sigma_clip(refMags-aperMags,sigma=2.2,iters=3)
+				zp,ivar = np.ma.average(dMag,weights=snr**2,returned=True)
+				M = np.float((~dMag.mask).sum())
+				wsd = np.sqrt(np.sum((dMag-zp)**2*snr**2) /
+				                   ((M-1)/M*np.sum(snr**-2)))
 				aperNstar[n,ccd-1] = len(dMag.compressed())
 				aperZps[n,ccd-1] = zp
+				aperZpRms[n,ccd-1] = 1.0856 / wsd #* ivar**-0.5
 				# now aperture corrections
 				mask = ( (aperCat['counts'][ii[c]]<=0) |
 				         (aperCat['flags'][ii[c]]>0) |
@@ -249,25 +291,24 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 			if len(m1) > 20:
 				refMags = sdss[filt][ref_ii[m2]]
 				psfMags = xCat[ccd].data['MAG_PSF'][m1]
-				dMag = sigma_clip(refMags - psfMags)
+				dMag = sigma_clip(refMags-psfMags,sigma=2.2,iters=3)
 				zp = np.ma.average(dMag)#,weights=snr**2)
 				psfNstar[n,ccd-1] = len(dMag.compressed())
 				# have to convert from the sextractor zeropoint
-				#zp += 25.0 - 2.5*np.log10(expTime)
-				psfZps[n,ccd-1] = zp
+				psfZps[n,ccd-1] = 25 + zp
 			else:
 				print 'WARNING: only %d psf stars for %s[%d]' % (len(m1),f,ccd)
 	aperCorrs = np.clip(aperCorrs,1,np.inf)
 	tab = Table([np.repeat(utd,len(frames)),
 	             dataMap.obsDb['frameIndex'][frames],
-	             aperZps,aperNstar,psfZps,psfNstar,aperCorrs],
+	             aperZps,aperZpRms,aperNstar,psfZps,psfNstar,aperCorrs],
 	            names=('utDate','frameIndex',
-	                   'aperZp','aperNstar','psfZp','psfNstar',
+	                   'aperZp','aperZpRms','aperNstar','psfZp','psfNstar',
 	                   'aperCorr'),
-	            dtype=('S8','i4','f4','i4','f4','i4','f4'))
+	            dtype=('S8','i4','f4','f4','i4','f4','i4','f4'))
 	return tab
 
-def zero_points(dataMap,procmap,refCat,magRange=(17.,20.5),aperNum=-2):
+def zero_points(dataMap,procmap,refCat,magRange=(17.,19.5),aperNum=-2):
 	aperCatDir = os.path.join(dataMap.procDir,'catalogs')
 	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
 	                         for filt in dataMap.iterFilters() ]
@@ -329,7 +370,7 @@ def stack_catalogs(dataMap,refCat,old=False):
 	tab.sort(['objId','frameIndex'])
 	return tab
 
-def calibrate_lightcurves(lcTab,dataMap,refCat,
+def calibrate_lightcurves(lcTab,dataMap,refCat,minNstar=70,
                           zpFile='bokrm_zeropoints.fits',outfn=None):
 	if outfn is None:
 		outfn = 'bokrmphot_%s.fits' % refCat['filePrefix']
@@ -338,27 +379,30 @@ def calibrate_lightcurves(lcTab,dataMap,refCat,
 	else:
 		tab = lcTab
 	apDat = Table.read(zpFile)
-	ii = match_to(tab['frameIndex'],apDat['frameIndex'])
+	ii = mapframes(tab['frameIndex'],apDat['frameIndex'])
+	print '--> ',len(tab),len(ii)
 	nAper = tab['counts'].shape[-1]
 	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
 	# cannot for the life of me figure out how to do this with indexing
 	for apNum in range(nAper):
 		apCorr[np.arange(len(ii)),apNum] = \
 		            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
-	zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<50)
+	zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<minNstar)
 	zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
 	corrCps = tab['counts'] * apCorr 
 	poscounts = np.ma.array(corrCps,mask=tab['counts']<=0)
 	magAB = zp - 2.5*np.ma.log10(poscounts)
+	magErr = 1.0856*np.ma.divide(tab['countsErr'],poscounts)
 	tab['aperMag'] = magAB.filled(99.99)
-	tab['aperMagErr'] = 1.0856*np.ma.divide(tab['countsErr'],poscounts)
+	tab['aperMagErr'] = magErr.filled(0)
 	# convert AB mag to nanomaggie
 	fluxConv = 10**(-0.4*(zp-22.5))
-	tab['aperFlux'] = corrCps * fluxConv
-	tab['aperFluxErr'] = tab['countsErr'] * apCorr * fluxConv
-	ii = match_to(tab['frameIndex'],dataMap.obsDb['frameIndex'])
-	tab['airmass'] = dataMap.obsDb['airmass'][ii]
-	tab['mjd'] = dataMap.obsDb['mjd'][ii]
+	flux = corrCps * fluxConv
+	fluxErr = tab['countsErr'] * apCorr * fluxConv
+	tab['aperFlux'] = flux.filled(0)
+	tab['aperFluxErr'] = fluxErr.filled(0)
+	tab = join_by_frameid(tab,dataMap.obsDb['frameIndex','airmass','mjd'])
+	print 'writing to ',outfn
 	tab.write(outfn,overwrite=True)
 
 def nightly_lightcurves(catName,lcs=None,redo=False):
