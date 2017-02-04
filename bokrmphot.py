@@ -465,8 +465,7 @@ def load_catalog(catName):
 		cat.rename_column('DEC','dec')
 		catPfx = 'rmqso'
 	elif catName == 'allqsos':
-		cat = Table.read(os.path.join(dataDir,
-		                              'allqsos_rmfield_phot_dr12.fits'),1)
+		cat = Table.read(os.path.join(dataDir,'allqsos_rmfield.fits'),1)
 		catPfx = 'allqso'
 	elif catName == 'sdss':
 		rmdir = os.environ['BOKRMDIR']
