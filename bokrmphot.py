@@ -15,16 +15,18 @@ import bokrmpipe
 # Nominal limits to classify night as "photometric"
 zp_phot_nominal = {'g':25.90,'i':25.40}
 
-def mapframes(ids1,ids2):
+def map_ids(ids1,ids2):
 	ii = -np.ones(ids2.max()+1,dtype=int)
 	ii[ids2] = np.arange(len(ids2))
 	return ii[ids1]
 
 def join_by_id(tab1,tab2,idkey):
-	ii = mapframes(tab1[idkey],tab2[idkey])
+	ii = map_ids(tab1[idkey],tab2[idkey])
 	# avoid duplication
 	tab2 = tab2.copy()
-	del tab2[idkey]
+	for c in tab1.colnames:
+		if c in tab2.colnames:
+			del tab2[c]
 	return hstack(tab1,tab2[ii])
 
 def join_by_frameid(tab1,tab2):
@@ -379,7 +381,7 @@ def calibrate_lightcurves(lcTab,dataMap,refCat,minNstar=70,
 	else:
 		tab = lcTab
 	apDat = Table.read(zpFile)
-	ii = mapframes(tab['frameIndex'],apDat['frameIndex'])
+	ii = map_ids(tab['frameIndex'],apDat['frameIndex'])
 	print '--> ',len(tab),len(ii)
 	nAper = tab['counts'].shape[-1]
 	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
