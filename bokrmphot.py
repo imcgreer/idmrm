@@ -27,7 +27,7 @@ def join_by_id(tab1,tab2,idkey):
 	for c in tab1.colnames:
 		if c in tab2.colnames:
 			del tab2[c]
-	return hstack(tab1,tab2[ii])
+	return hstack([tab1,tab2[ii]])
 
 def join_by_frameid(tab1,tab2):
 	return join_by_id(tab1,tab2,'frameIndex')
@@ -458,6 +458,90 @@ def nightly_lightcurves(catName,lcs=None,redo=False):
 	err = 1.0856*np.ma.divide(tab['aperFluxErr'],flux)
 	tab['aperMagErr'] = err.filled(99.99)
 	tab.write(lcFn,overwrite=redo)
+
+def map_group_to_items(tab):
+	'''Given an astropy.table.Table that has been grouped, return the
+	   set of indices that maps the groups back to the original table.
+	   Useful for comparing aggregate values to individual measurements.
+	   Example:
+	     g = tab.group_by('object')
+	     mean_mag = g['mag'].groups.aggregate(np.mean)
+	     ii = map_group_to_items(g)
+	     tab['delta_mag'] = g['mag'] - mean_mag[ii]
+	'''
+	return np.concatenate( 
+	          [ np.repeat(i,np.diff(ii))
+	              for i,ii in enumerate(zip(tab.groups.indices[:-1],
+	                                        tab.groups.indices[1:])) ] )
+
+def weighted_mean_mag(phot,magkey='mag',ivarkey='ivar',rms=True):
+	'''Given a grouped table and keys for the columns containing 
+	   magnitudes and inverse variances of the magnitudes, calculate
+	   the inverse-variance weighted mean magnitude.
+	   Also return the scatter in the magnitudes if rms=True.
+	'''
+	phot['wtmag'] = phot[magkey]*phot[ivarkey]
+	aggphot = phot['wtmag',ivarkey].groups.aggregate(np.ma.sum)
+	mean_mag = aggphot['wtmag']/aggphot[ivarkey]
+	if not rms:
+		return mean_mag
+	else:
+		photrms = phot[magkey].groups.aggregate(np.ma.std)
+		return mean_mag,photrms
+
+def aggregate_phot_byobj(phot,apNum=2,sigma=3.0,iters=3):
+	phot = Table(phot,masked=True)
+	# select aperture (aggregate functions collapse along 2nd dim)
+	phot['mag'] = phot['aperMag'][:,apNum]
+	phot['err'] = phot['aperMagErr'][:,apNum]
+	phot['flag'] = phot['flags'][:,apNum]
+	# reduce to only the necessary columns
+	phot = phot['frameIndex','objId','filter','mag','err','flag']
+	# add masks
+	if True:
+		mask = (phot['mag']>90) | (phot['err']==0) | (phot['flag']>0)
+		phot['mag'].mask |= mask
+		phot['err'].mask |= mask
+	phot['ivar'] = np.ma.power(phot['err'],-2)
+	# now group and aggregate, getting indexes back to full table
+	phot = phot.group_by(['objId','filter'])
+	ii = map_group_to_items(phot)
+	# have to do sigma-clipping by hand
+	mean_mag,rms_mag = weighted_mean_mag(phot)
+	if iters >= 1:
+		phot['clipped_mag'] = phot['mag'].copy()
+		phot['clipped_ivar'] = phot['ivar'].copy()
+	for iterNum in range(iters):
+		dmag = phot['clipped_mag'] - mean_mag[ii]
+		dev = np.ma.abs(dmag/rms_mag[ii])
+		reject = np.ma.greater(dev,sigma)
+		phot['clipped_mag'].mask |= reject
+		phot['clipped_ivar'].mask |= reject
+		mean_mag,rms_mag = weighted_mean_mag(phot,
+		                                     'clipped_mag','clipped_ivar')
+	# get chi^2 using weighted mean
+	phot['chi2'] = (phot['mag']-mean_mag[ii])**2*phot['ivar']
+	phot['n'] = ~phot['mag'].mask
+	if iters >= 1:
+		dmag = phot['clipped_mag'] - mean_mag[ii]
+		phot['clipped_chi2'] = dmag**2*phot['clipped_ivar']
+		phot['clipped_n'] = ~phot['clipped_mag'].mask
+	aggphot = phot['chi2','n',
+	               'clipped_chi2','clipped_n'].groups.aggregate(np.ma.sum)
+	mean_mag.name = 'mean_mag'
+	rms_mag.name = 'rms_mag'
+	aggphot.add_columns([phot.groups.keys['objId'],
+	                     phot.groups.keys['filter'],
+	                     mean_mag,rms_mag],[0,0,0,0])
+	#
+	aggphot['rchi2'] = aggphot['chi2']/(aggphot['n']-1)
+	aggphot['clipped_rchi2'] = aggphot['clipped_chi2']/(aggphot['clipped_n']-1)
+	return aggphot
+
+# psum2 = psum.group_by('filter')['objId','mean_mag','rms_mag']
+# merged = join(psum2.groups[0].filled(),psum2.groups[1].filled(),'objId',table_names=list(psum2.groups.keys['filter']))
+# m = join(merged,sdss,'objId')
+# scatter(m['g']-m['i'],m['mean_mag_g']-m['mean_mag_i'],s=1)
 
 def load_catalog(catName):
 	dataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
