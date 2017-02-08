@@ -498,15 +498,19 @@ def check_bias_ramp(dataMap):
 		break
 	plt.show()
 
-def image_cutouts(dataMap,catFile,band='g',old=False):
+def image_cutouts(dataMap,catFile,refCat,band='g',objid=None,old=False):
 	from astropy.nddata import Cutout2D
 	objs = Table.read(catFile)
 	try:
 		objs['frameIndex'] = objs['frameId']
 	except:
 		pass
-	objs = join(objs,dataMap.obsDb,'frameIndex')
-	objs = objs.group_by('objId')
+	if objid is not None:
+		obj_ii = np.where(objs['objId']==objid)[0]
+		objs = objs[obj_ii]
+	objs = bokrmphot.join_by_frameid(objs,
+	                      dataMap.obsDb['frameIndex','utDir','fileName'])
+	objs = objs.group_by(['objId','filter'])
 	if old:
 		datadir = '/media/ian/stereo/data/projects/SDSS-RM/rmreduce/'
 	else:
@@ -519,14 +523,16 @@ def image_cutouts(dataMap,catFile,band='g',old=False):
 		outdir = 'bokcutouts/'
 	if not os.path.exists(outdir):
 		os.makedirs(outdir)
-	for obj in objs.groups:
-		cutfile = outdir+'bokrm%03d_%s.fits'%(obj['objId'][0],band)
+	for k,obj in zip(objs.groups.keys,objs.groups):
+		objId = k['objId']
+		band = k['filter']
+		cutfile = outdir+'bok%s%03d_%s.fits'%(refCat['filePrefix'],objId,band)
 		if os.path.exists(cutfile) or len(obj)==0:
 			continue
 		hdus = [ fits.PrimaryHDU() ]
 		for i,obs in enumerate(obj):
 			sys.stdout.write('\rRM%03d %4d/%4d' % 
-			                 (obs['objId'],(i+1),len(obj)))
+			                 (objId,(i+1),len(obj)))
 			sys.stdout.flush()
 			ccdNum = obs['ccdNum']
 			if old:
@@ -548,7 +554,8 @@ def image_cutouts(dataMap,catFile,band='g',old=False):
 			hdus.append(fits.ImageHDU(cutobj.data,newhdr))
 		fits.HDUList(hdus).writeto(cutfile)
 
-def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
+def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
+                     nbin=None,old=False,trim=None):
 	from astropy.visualization import ZScaleInterval
 	from matplotlib.backends.backend_pdf import PdfPages
 	# load object database
@@ -557,10 +564,13 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 		objs['frameIndex'] = objs['frameId']
 	except:
 		pass
+	if objid is not None:
+		obj_ii = np.where(objs['objId']==objid)[0]
+		objs = objs[obj_ii]
 	tmpObsDb = dataMap.obsDb.copy()
 	tmpObsDb['mjd_mid'] = tmpObsDb['mjd'] + (tmpObsDb['expTime']/2)/(3600*24.)
-	objs = join(objs,tmpObsDb,'frameIndex')
-	objs = objs.group_by('objId')
+	objs = bokrmphot.join_by_frameid(objs,tmpObsDb)
+	objs = objs.group_by(['objId','filter'])
 	# configure figures
 	nrows,ncols = 8,6
 	figsize = (7.0,10.25)
@@ -573,7 +583,7 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 	else:
 		outdir = 'bokcutouts/'
 	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
-	if True:
+	if True and refCat['filePrefix']=='rmqso':
 		diffphot = Table.read('bok%s_photflags.fits'%band)
 		errlog = open('bokflags_%s_err.log'%band,'a')
 		bitstr = [ 'TinyFlux','BigFlux','TinyErr','BigErr','BigOff']
@@ -590,11 +600,14 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 		diffphot['frameIndex'] = frameid
 		matched = diffphot['MJD'] == 0 # ignoring these
 	plt.ioff()
-	for obj in objs.groups:
-		objId = obj['objId'][0]
-		if objId >= 850:
+	for k,obj in zip(objs.groups.keys,objs.groups):
+		objId = k['objId']
+		_band = k['filter']
+		if _band != band: continue
+		if refCat['filePrefix']=='rmqso' and objId >= 850:
 			break
-		cutfile = outdir+'bokrm%03d_%s.fits'%(obj['objId'][0],band)
+		cutfile = outdir+'bok%s%03d_%s.fits' % (refCat['filePrefix'],
+		                                        obj['objId'][0],band)
 		pdffile = cutfile.replace('.fits','.pdf')
 		if os.path.exists(pdffile) or len(obj)==0:
 			continue
@@ -646,7 +659,7 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 			plt.imshow(cut,origin='lower',interpolation='nearest',
 			           vmin=z1,vmax=z2,cmap=plt.cm.gray_r,aspect='equal')
 			framestr1 = '(%d,%d,%d)' % (obs['ccdNum'],obs['x'],obs['y'])
-			framestr2 = '%.3f' % (obs['mjd_1'])
+			framestr2 = '%.3f' % (obs['mjd'])
 			utstr = obs['utDate'][2:]+' '+obs['utObs'][:5]
 			frameclr = ccdcolors[obs['ccdNum']-1]
 			ax.set_title(utstr,size=7,color='k',weight='bold')
@@ -658,7 +671,11 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 			            size=7,color='blue',
 			            transform=ax.transAxes)
 			t.set_bbox(dict(color='white',alpha=0.45,boxstyle="square,pad=0"))
-			if True:
+			if obs['flags'][2] > 0:
+				t = ax.text(0.03,0.7,'%d' % obs['flags'][2],
+				            size=10,ha='left',va='top',color='red',
+				            transform=ax.transAxes)
+			if True and refCat['filePrefix']=='rmqso':
 				_j = np.where(diffphot['frameIndex'][objId] ==
 				              obs['frameIndex'])[0]
 				if len(_j)>0:
@@ -672,24 +689,27 @@ def image_thumbnails(dataMap,catFile,band='g',nbin=None,old=False,trim=None):
 						            transform=ax.transAxes)
 				else:
 					errlog.write('no diff phot for %d %.4f %.4f\n' % 
-					             (objId,obs['mjd_1'],obs['mjd_mid']))
+					             (objId,obs['mjd'],obs['mjd_mid']))
 			ax.xaxis.set_visible(False)
 			ax.yaxis.set_visible(False)
 			pnum += 1
-		if True:
+		if True and refCat['filePrefix']=='rmqso':
 			jj = np.where(~matched[objId])[0]
 			if len(jj)>0:
 				errlog.write('unmatched for %d:\n'%objId)
 				for j in jj:
 					errlog.write('    %.5f  %d\n'%
 					     (diffphot['MJD'][objId,j],diffphot['FLAG'][objId,j]))
-		if pnum != nplot+1:
+		try:
 			pdf.savefig()
 			plt.close()
+		except:
+			pass
 		pdf.close()
-	plt.ion()
-	errlog.close()
 	print
+	plt.ion()
+	if True and refCat['filePrefix']=='rmqso':
+		errlog.close()
 
 if __name__=='__main__':
 	import argparse
@@ -719,6 +739,8 @@ if __name__=='__main__':
 	                help='factor by which to bin the thumbnail images')
 	parser.add_argument('--old',action='store_true',
 	                help='use old (09/2014) processed images')
+	parser.add_argument('--objid',type=int,
+	                help='object number')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -736,12 +758,11 @@ if __name__=='__main__':
 	elif args.checkgains:
 		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb)
 	elif args.cutouts:
-		if args.band is None:
-			raise ValueError("must specify filter (g or i)")
-		image_cutouts(dataMap,args.catalog,band=args.band,old=args.old)
+		image_cutouts(dataMap,args.catalog,refCat,band=args.band,
+		              objid=args.objid,old=args.old)
 	elif args.thumbnails:
 		if args.band is None:
 			raise ValueError("must specify filter (g or i)")
-		image_thumbnails(dataMap,args.catalog,band=args.band,
-		                 nbin=args.nbin,old=args.old)
+		image_thumbnails(dataMap,args.catalog,refCat,band=args.band,
+		                 objid=args.objid,nbin=args.nbin,old=args.old)
 
