@@ -489,22 +489,26 @@ def weighted_mean_mag(phot,magkey='mag',ivarkey='ivar',rms=True):
 		photrms = phot[magkey].groups.aggregate(np.ma.std)
 		return mean_mag,photrms
 
-def aggregate_phot_byobj(phot,apNum=2,sigma=3.0,iters=3):
-	phot = Table(phot,masked=True)
+def load_masked_phot(lcTab,apNum=2,maskBits=None):
+	phot = Table(lcTab,masked=True)
+	phot.meta['APERNUM'] = apNum
+	phot.meta['MASKBITS'] = str(maskBits)
 	# select aperture (aggregate functions collapse along 2nd dim)
 	phot['mag'] = phot['aperMag'][:,apNum]
 	phot['err'] = phot['aperMagErr'][:,apNum]
 	phot['flag'] = phot['flags'][:,apNum]
 	# reduce to only the necessary columns
-	phot = phot['frameIndex','objId','filter','mag','err','flag']
+	phot = phot['frameIndex','objId','mjd','filter','mag','err','flag']
 	# add masks
-	if True:
-		mask = (phot['mag']>90) | (phot['err']==0) | (phot['flag']>0)
-		phot['mag'].mask |= mask
-		phot['err'].mask |= mask
+	if maskBits is None:
+		maskBits = 2**32-1
+	mask = (phot['mag']>90) | (phot['err']==0) | ((phot['flag']&maskBits)>0)
+	phot['mag'].mask |= mask
+	phot['err'].mask |= mask
 	phot['ivar'] = np.ma.power(phot['err'],-2)
-	# now group and aggregate, getting indexes back to full table
-	phot = phot.group_by(['objId','filter'])
+	return phot
+
+def calc_aggregate_phot(phot,clip=True,sigma=3.0,iters=3):
 	ii = map_group_to_items(phot)
 	# have to do sigma-clipping by hand
 	mean_mag,rms_mag = weighted_mean_mag(phot)
@@ -520,7 +524,9 @@ def aggregate_phot_byobj(phot,apNum=2,sigma=3.0,iters=3):
 		mean_mag,rms_mag = weighted_mean_mag(phot,
 		                                     'clipped_mag','clipped_ivar')
 	# get chi^2 using weighted mean
-	phot['chi2'] = (phot['mag']-mean_mag[ii])**2*phot['ivar']
+	phot['dmag'] = phot['mag'] - mean_mag[ii]
+	phot['chival'] = phot['dmag']*np.ma.sqrt(phot['ivar'])
+	phot['chi2'] = phot['dmag']**2*phot['ivar']
 	phot['n'] = ~phot['mag'].mask
 	if iters >= 1:
 		dmag = phot['clipped_mag'] - mean_mag[ii]
@@ -536,7 +542,48 @@ def aggregate_phot_byobj(phot,apNum=2,sigma=3.0,iters=3):
 	#
 	aggphot['rchi2'] = aggphot['chi2']/(aggphot['n']-1)
 	aggphot['clipped_rchi2'] = aggphot['clipped_chi2']/(aggphot['clipped_n']-1)
-	return aggphot
+	# cleanup intermediate columns used during aggregation
+	del phot['wtmag','clipped_mag','clipped_ivar','clipped_chi2','clipped_n']
+	return phot,aggphot
+
+def aggregate_phot_byobj(phot,**kwargs):
+	phot = phot.group_by(['objId','filter'])
+	return calc_aggregate_phot(phot,**kwargs)
+
+def aggregate_phot_nightly(phot,**kwargs):
+	# mjd-0.5 gives a nightly UT date, but pad with 0.1 because 
+	# ~6am MT is >noon UT
+	phot['mjdInt'] = np.int32(np.floor(phot['mjd']-0.6))
+	phot = phot.group_by(['objId','filter','mjdInt'])
+	return calc_aggregate_phot(phot,**kwargs)
+
+def aggregate_phot(lcTab,refCat,which,**kwargs):
+	phot = load_masked_phot(lcTab)
+	if which=='all':
+		phot,aggPhot = aggregate_phot_byobj(phot,**kwargs)
+	elif which=='nightly':
+		phot,aggPhot = aggregate_phot_nightly(phot,**kwargs)
+	# XXX why aren't masks carrying through here?
+	phot.write('photsum_%s_%s.fits' % (refCat['filePrefix'],which),
+	           overwrite=True)
+	aggPhot.write('agg_phot_%s_%s.fits' % (refCat['filePrefix'],which),
+	              overwrite=True)
+
+def find_star_outliers(starPhot,fthresh=10.0,othresh=5.0):
+	chival = starPhot['chival'].filled(0)
+	starPhot['outlier'] = np.abs(chival) > fthresh
+	fgroup = starPhot.group_by('frameIndex')
+	nFrameBad = fgroup['n','outlier'].groups.aggregate(np.sum)
+	nFrameBad = hstack([fgroup.groups.keys,nFrameBad])
+	nFrameBad['outlierFrac'] = ( nFrameBad['outlier'].astype(float) /
+	                             nFrameBad['n'] )
+	starPhot['outlier'] = np.abs(chival) > othresh
+	ogroup = starPhot.group_by(['objId','filter'])
+	nObjBad = ogroup['n','outlier'].groups.aggregate(np.sum)
+	nObjBad = hstack([ogroup.groups.keys,nObjBad])
+	nObjBad['outlierFrac'] = ( nObjBad['outlier'].astype(float) /
+	                           nObjBad['n'] )
+	return nFrameBad,nObjBad
 
 # psum2 = psum.group_by('filter')['objId','mean_mag','rms_mag']
 # merged = join(psum2.groups[0].filled(),psum2.groups[1].filled(),'objId',table_names=list(psum2.groups.keys['filter']))
@@ -581,6 +628,8 @@ if __name__=='__main__':
 	                help='background method to use for aperture phot ([global]|local|none)')
 	parser.add_argument('--lightcurves',action='store_true',
 	                help='construct lightcurves')
+	parser.add_argument('--aggregate',action='store_true',
+	                help='construct aggregate photometry')
 	parser.add_argument('--nightly',action='store_true',
 	                help='construct nightly lightcurves')
 	parser.add_argument('--zeropoint',action='store_true',
@@ -620,9 +669,13 @@ if __name__=='__main__':
 		calibrate_lightcurves(lcTab,dataMap,refCat,zpFile=args.zptable,
 		                      outfn=args.outfile)#,old=args.old)
 		timerLog('lightcurves')
-	elif args.nightly:
-		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
-		timerLog('night-avgd phot')
+	elif args.aggregate:
+		lcTab = Table.read(args.lctable)
+		which = 'nightly' if args.nightly else 'all'
+		aggregate_phot(lcTab,refCat,which)#,**kwargs)
+#	elif args.nightly:
+#		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
+		timerLog('aggregate phot')
 	elif args.zeropoint:
 		zero_points(dataMap,procmap,refCat)
 		timerLog('zeropoints')
