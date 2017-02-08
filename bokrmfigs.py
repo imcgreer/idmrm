@@ -52,23 +52,26 @@ def conditions_strip_charts(byFrame=False):
 	ax1.set_ylim(0,3.0)
 	ax2.set_ylim(22.6,18.5)
 
-def plot_lightcurve(targetNum,targetSource='RM',shownightly=False):
-	pfx = 'bokrm_sdss'
-	gcat = Table.read('lightcurves_bokrm_g.fits')
-	icat = None
-	refCat = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
-	aperNum = 3
+def dump_lc(lc,rowNum,aperNum):
+	for i in rowNum:
+		print '%12.5f %3s %8.3f %6.3f %5d' % \
+		         (lc['mjd'][i],lc['filter'][i],lc['aperMag'][i,aperNum],
+		          lc['aperMagErr'][i,aperNum],lc['flags'][i,aperNum])
+
+#lcTab = lcTab.group_by('objId')
+def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
+                    targetSource='RM',shownightly=False):
 	ymin,ymax = 1e9,0
 	plt.figure(figsize=(12,5))
 	plt.subplots_adjust(0.05,0.05,0.97,0.94)
 	ax,pnum = None,1
-	gcat = gcat.group_by('objId')
-	j = np.where(gcat.groups.keys['objId']==targetNum)[0][0]
-	glc = gcat.groups[j]
-	ilc = None #icat.groups[j]
-	for band,lc,clr in zip('gi',[glc,ilc],['g','r']):
+	if refCat is not None:
+		_j = np.where(refCat['objId']==targetNum)[0][0]
+	j = np.where(lcTab.groups.keys['objId']==targetNum)[0][0]
+	lc = lcTab.groups[j].group_by('filter')
+	for band,lc,clr in zip(lc.groups.keys['filter'],lc.groups,['g','r']):
 		ax = plt.subplot(2,1,pnum,sharex=ax)
-		jj = np.where(lc['aperMagErr'][:,aperNum] > 0)[0]
+		jj = np.where(lc['aperMag'][:,aperNum] < 30)[0]
 		if len(jj)==0:
 			pnum += 1
 			continue
@@ -76,6 +79,11 @@ def plot_lightcurve(targetNum,targetSource='RM',shownightly=False):
 		             lc['aperMag'][jj,aperNum],
 		             lc['aperMagErr'][jj,aperNum],
 		             fmt='s',mfc='none',ecolor=clr,ms=2)
+		if True:
+			dump_lc(lc,jj,aperNum)
+		kk = np.where(lc['flags'][:,aperNum] > 0)[0]
+		plt.scatter(lc['mjd'][kk],lc['aperMag'][kk,aperNum],
+		            marker='x',s=50,color='k',lw=1)
 		if shownightly:
 			nightly = Table.read('nightly_lcs_bokrm_g.fits')
 			nightly = nightly.group_by('objId')
@@ -90,6 +98,8 @@ def plot_lightcurve(targetNum,targetSource='RM',shownightly=False):
 		dy = max(0.05,5*np.median(lc['aperMagErr'][jj,aperNum]))
 		plt.ylim(ymin-dy,ymax+dy)
 		bi = 1 if clr=='g' else 3
+		if band=='g':
+			plt.title('object %d' % (targetNum))
 		if False:#targetSource=='RM':
 			plt.axhline(target['PSFMAG'][targetNum,bi],color=clr)
 			plt.scatter(target['DR_MJD'][targetNum],
@@ -98,8 +108,8 @@ def plot_lightcurve(targetNum,targetSource='RM',shownightly=False):
 			if clr=='g':
 				plt.title('rm%03d, z=%.2f' % 
 				          (targetNum,target['ZFINAL'][targetNum]))
+		if refCat is not None:
+			plt.axhline(refCat[band][_j],c='gray')
 		pnum += 1
-		break
-	# XXX change lims when have i band
-	plt.xlim(min(glc['mjd'].min(),np.inf)-5,max(glc['mjd'].max(),0)+5)
+	plt.xlim(min(lc['mjd'].min(),np.inf)-5,max(lc['mjd'].max(),0)+5)
 
