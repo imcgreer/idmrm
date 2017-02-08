@@ -569,21 +569,28 @@ def aggregate_phot(lcTab,refCat,which,**kwargs):
 	aggPhot.write('agg_phot_%s_%s.fits' % (refCat['filePrefix'],which),
 	              overwrite=True)
 
+def load_agg_phot(aggPhotFn):
+	phot = Table.read(aggPhotFn)
+	# XXX why aren't masks carrying through here?
+	for k in ['mag','err','ivar','dmag','chival','chi2']:
+		phot[k].mask |= ~phot['n']
+	return phot
+
+def find_outliers(phot,thresh):
+	chival = phot['chival'].filled(0)
+	phot['outlier'] = np.abs(chival) > thresh
+	nbad = phot['n','outlier','chi2'].groups.aggregate(np.sum)
+	nbad = hstack([phot.groups.keys,nbad])
+	nbad['outlierFrac'] = nbad['outlier'].astype(float) / nbad['n']
+	nbad['rchi2'] = nbad['chi2'] / (nbad['n']-1)
+	return nbad
+
 def find_star_outliers(starPhot,fthresh=10.0,othresh=5.0):
-	chival = starPhot['chival'].filled(0)
-	starPhot['outlier'] = np.abs(chival) > fthresh
 	fgroup = starPhot.group_by('frameIndex')
-	nFrameBad = fgroup['n','outlier'].groups.aggregate(np.sum)
-	nFrameBad = hstack([fgroup.groups.keys,nFrameBad])
-	nFrameBad['outlierFrac'] = ( nFrameBad['outlier'].astype(float) /
-	                             nFrameBad['n'] )
-	starPhot['outlier'] = np.abs(chival) > othresh
+	frameBad = find_outliers(fgroup,fthresh)
 	ogroup = starPhot.group_by(['objId','filter'])
-	nObjBad = ogroup['n','outlier'].groups.aggregate(np.sum)
-	nObjBad = hstack([ogroup.groups.keys,nObjBad])
-	nObjBad['outlierFrac'] = ( nObjBad['outlier'].astype(float) /
-	                           nObjBad['n'] )
-	return nFrameBad,nObjBad
+	objBad = find_outliers(ogroup,othresh)
+	return frameBad,objBad
 
 # psum2 = psum.group_by('filter')['objId','mean_mag','rms_mag']
 # merged = join(psum2.groups[0].filled(),psum2.groups[1].filled(),'objId',table_names=list(psum2.groups.keys['filter']))
