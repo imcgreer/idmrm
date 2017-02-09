@@ -474,6 +474,19 @@ def map_group_to_items(tab):
 	              for i,ii in enumerate(zip(tab.groups.indices[:-1],
 	                                        tab.groups.indices[1:])) ] )
 
+def clipped_median_mag(phot,magkey='mag',rms=True):
+	'''Given a grouped table and keys for the columns containing 
+	   magnitudes and inverse variances of the magnitudes, calculate
+	   the inverse-variance weighted mean magnitude.
+	   Also return the scatter in the magnitudes if rms=True.
+	'''
+	mean_mag = phot[magkey].groups.aggregate(np.ma.median)
+	if not rms:
+		return mean_mag
+	else:
+		photrms = phot[magkey].groups.aggregate(np.ma.std)
+		return mean_mag,photrms
+
 def weighted_mean_mag(phot,magkey='mag',ivarkey='ivar',rms=True):
 	'''Given a grouped table and keys for the columns containing 
 	   magnitudes and inverse variances of the magnitudes, calculate
@@ -510,25 +523,28 @@ def load_masked_phot(lcTab,apNum=2,maskBits=None):
 
 def calc_aggregate_phot(phot,clip=True,sigma=3.0,iters=3):
 	ii = map_group_to_items(phot)
-	# have to do sigma-clipping by hand
-	mean_mag,rms_mag = weighted_mean_mag(phot)
-	if iters >= 1:
+	if clip:
+		# have to do sigma-clipping by hand
+		mean_mag,rms_mag = clipped_median_mag(phot)
 		phot['clipped_mag'] = phot['mag'].copy()
 		phot['clipped_ivar'] = phot['ivar'].copy()
-	for iterNum in range(iters):
-		dmag = phot['clipped_mag'] - mean_mag[ii]
-		dev = np.ma.abs(dmag/rms_mag[ii])
-		reject = np.ma.greater(dev,sigma)
-		phot['clipped_mag'].mask |= reject
-		phot['clipped_ivar'].mask |= reject
+		for iterNum in range(iters):
+			dmag = phot['clipped_mag'] - mean_mag[ii]
+			dev = np.ma.abs(dmag/rms_mag[ii])
+			reject = np.ma.greater(dev,sigma)
+			phot['clipped_mag'].mask |= reject
+			phot['clipped_ivar'].mask |= reject
+			mean_mag,rms_mag = clipped_median_mag(phot)
 		mean_mag,rms_mag = weighted_mean_mag(phot,
 		                                     'clipped_mag','clipped_ivar')
+	else:
+		mean_mag,rms_mag = weighted_mean_mag(phot)
 	# get chi^2 using weighted mean
 	phot['dmag'] = phot['mag'] - mean_mag[ii]
 	phot['chival'] = phot['dmag']*np.ma.sqrt(phot['ivar'])
 	phot['chi2'] = phot['dmag']**2*phot['ivar']
 	phot['n'] = ~phot['mag'].mask
-	if iters >= 1:
+	if clip:
 		dmag = phot['clipped_mag'] - mean_mag[ii]
 		phot['clipped_chi2'] = dmag**2*phot['clipped_ivar']
 		phot['clipped_n'] = ~phot['clipped_mag'].mask
