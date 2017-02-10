@@ -54,11 +54,11 @@ def conditions_strip_charts(byFrame=False):
 
 def dump_lc(lc,rowNum,aperNum):
 	for i in rowNum:
-		print '%12.5f %3s %8.3f %6.3f %5d' % \
-		         (lc['mjd'][i],lc['filter'][i],lc['aperMag'][i,aperNum],
-		          lc['aperMagErr'][i,aperNum],lc['flags'][i,aperNum])
+		print '%7d %12.5f %3s %8.3f %6.3f %5d' % \
+		         (lc['frameIndex'][i],lc['mjd'][i],lc['filter'][i],
+		          lc['aperMag'][i,aperNum],lc['aperMagErr'][i,aperNum],
+		          lc['flags'][i,aperNum])
 
-#lcTab = lcTab.group_by('objId')
 def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
                     targetSource='RM',shownightly=False):
 	ymin,ymax = 1e9,0
@@ -67,8 +67,17 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 	ax,pnum = None,1
 	if refCat is not None:
 		_j = np.where(refCat['objId']==targetNum)[0][0]
-	j = np.where(lcTab.groups.keys['objId']==targetNum)[0][0]
-	lc = lcTab.groups[j].group_by('filter')
+	gkeys = lcTab.groups.keys
+	if gkeys.colnames == ['objId']:
+		j = np.where(lcTab.groups.keys['objId']==targetNum)[0][0]
+		lc = lcTab.groups[j].group_by('filter')
+	elif gkeys is None or gkeys.colnames == ['objId','filter']:
+		if gkeys is None:
+			lcTab = lcTab.group_by(['objId','filter'])
+		jj = np.where(lcTab.groups.keys['objId']==targetNum)[0]
+		lc = lcTab.groups[jj]
+	else:
+		raise ValueError
 	for band,lc,clr in zip(lc.groups.keys['filter'],lc.groups,['g','r']):
 		ax = plt.subplot(2,1,pnum,sharex=ax)
 		jj = np.where(lc['aperMag'][:,aperNum] < 30)[0]
