@@ -3,6 +3,10 @@ Bok 90Prime data for the SDSS-RM project
 
 ### Examples of using Makefiles to run processing steps
 
+First have to build the log of observations:
+
+`make -f Makefile.2014 obsdb`
+
 Process all images from 2014 through basic detrending (bias removal, flat correction, sky subtraction):
 
 `make -f Makefile.2014`
