@@ -21,11 +21,15 @@ Assuming all necessary calibration files exist, reprocess the science images for
 
 Redo individual processing steps:
 
-`make -f Makefile.2014 steps STEPS=oscan,proc1 UTDATE=20140425 XARGS="-R -t object"`
+`make -f Makefile.2014 procall XARGS="-R -f bokrm.20140425.0121" NPROC=1`
 
 Pipeline failures? Single-process debug mode:
 
 `make -f Makefile.2014 procall UTDATE=20140425 NPROC=1 XARGS="-R --debug"`
+
+Redo just one file:
+
+`make -f Makefile.2014 steps STEPS=oscan,proc1 UTDATE=20140425 XARGS="-R -t object"`
 
 Post-processing steps: astrometric solutions, sextractor and aperture photometry catalogs:
 
