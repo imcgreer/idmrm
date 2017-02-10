@@ -27,6 +27,10 @@ Pipeline failures? Single-process debug mode:
 
 `make -f Makefile.2014 procall UTDATE=20140425 NPROC=1 XARGS="-R --debug"`
 
+Redo just one file:
+
+`make -f Makefile.2014 procall XARGS="-R -f bokrm.20140425.0121" NPROC=1`
+
 Post-processing steps: astrometric solutions, sextractor and aperture photometry catalogs:
 
 `make -f Makefile.2014 wcs catalogs aperphot_sdss aperphot_rm`
