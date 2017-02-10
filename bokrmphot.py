@@ -15,6 +15,133 @@ import bokrmpipe
 # Nominal limits to classify night as "photometric"
 zp_phot_nominal = {'g':25.90,'i':25.40}
 
+
+
+##############################################################################
+#
+# target catalogs for aperture photometry
+#
+##############################################################################
+
+class RmPhotCatalog(object):
+	sdssRmDataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
+	bokRmDataDir = os.path.join(os.environ['BOKRMDIR'],'data')
+	frameListFile = os.path.join(bokRmDataDir,'BokRMFrameList.fits.gz')
+	photCols = ['aperMag','aperMagErr','aperFlux','aperFluxErr']
+	def __init__(self,catdir='.',photfile=None):
+		self.catDir = catdir
+		if photfile:
+			self.photFile = photfile
+		else:
+			self.photFile = 'bokrmphot_%s.fits' % self.name
+		self.bokPhotFn = os.path.join(self.catDir,self.photFile)
+		self.refCat = None
+		self.bokPhot = None
+		self.maskBits = 2**32 - 1
+	def load_ref_catalog(self):
+		if self.refCat is None:
+			self.refCat = Table.read(self.refCatFile)
+	def apply_frame_mask(self):
+		frameList = Table.read(self.frameListFile)
+		badFrames = identify_bad_frames(frameList)
+		print 'rejecting ',len(badFrames),' bad frames'
+		isbadframe = np.in1d(self.bokPhot['frameIndex'],badFrames)
+		for c in self.photCols:
+			self.bokPhot[c].mask |= isbadframe[:,np.newaxis]
+	def apply_flag_mask(self,maskBits=None):
+		if maskBits:
+			self.maskBits = maskBits
+		mask = (self.bokPhot['flags'] & self.maskBits) > 0
+		for c in self.photCols:
+			self.bokPhot[c].mask |= mask
+	def load_bok_phot(self,nogroup=False):
+		try:
+			self.bokPhot = Table(Table.read(self.bokPhotFn),masked=True)
+		except IOError:
+			return None
+		# XXX this is here because the table is currently saved unmasked
+		mask = self.bokPhot['aperFlux'] == 0
+		self.bokPhot['aperFlux'].mask |= mask
+		self.bokPhot['aperFluxErr'].mask |= mask
+		mask = self.bokPhot['aperMag'] > 90
+		self.bokPhot['aperMag'].mask |= mask
+		self.bokPhot['aperMagErr'].mask |= mask
+		if not nogroup:
+			self.bokPhot = self.bokPhot.group_by(['objId','filter'])
+		return self.bokPhot
+	def get_aperture_table(self,aperNum):
+		phot = self.bokPhot['frameIndex','objId','mjd','filter'].copy()
+		for c in self.photCols + ['flags']:
+			phot[c] = self.bokPhot[c][:,aperNum]
+		phot['aperFluxIvar'] = np.ma.power(phot['aperFluxErr'],-2)
+		phot['aperMagIvar'] = np.ma.power(phot['aperMagErr'],-2)
+		phot.meta['APERNUM'] = aperNum
+		phot.meta['MASKBITS'] = self.maskBits
+		return phot
+
+class RmQsoCatalog(RmPhotCatalog):
+	name = 'rmqso'
+	def __init__(self,**kwargs):
+		super(RmQsoCatalog,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.sdssRmDataDir,
+		                               'target_fibermap.fits')
+	def load_ref_catalog(self):
+		super(RmQsoCatalog,self).load_ref_catalog()
+		if 'RA' in self.refCat.colnames:
+			self.refCat.rename_column('RA','ra')
+			self.refCat.rename_column('DEC','dec')
+
+class SdssStarCatalog(RmPhotCatalog):
+	name = 'sdssstars'
+	def __init__(self,**kwargs):
+		super(SdssStarCatalog,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.bokRmDataDir,
+		                               'sdssRefStars_DR13.fits.gz')
+
+class CleanSdssStarCatalog(SdssStarCatalog):
+	name = 'sdssrefstars'
+	def __init__(self,**kwargs):
+		super(CleanSdssStarCatalog,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.bokRmDataDir,
+		                               'sdssRefStars_DR13_clean.fits.gz')
+		if not os.path.exists(self.refCatFile):
+			self.__generate()
+	def __generate(self):
+		qsos = Table.read(os.path.join(self.sdssRmDataDir,
+		                               'targets_final.fits'))
+		refCat = Table.read(os.path.join(self.bokRmDataDir,
+		                                 'sdssRefStars_DR13.fits.gz'))
+		print 'starting with ',len(refCat)
+		# remove objects in the quasar catalog
+		m1,m2,s = srcor(refCat['ra'],refCat['dec'],qsos['RA'],qsos['DEC'],2.0)
+		refCat.remove_rows(m1)
+		print 'removed ',len(m1),' quasars from star catalog ',len(refCat)
+		# remove objects with bad photometry; bad list comes 
+		# from find_outliers
+		f = os.path.join('.','sdssPhotSummary.fits')
+		objSum = Table.read(f)
+		for b in 'gi':
+			refCat[b+'_orig'] = refCat[b].copy()
+			ii = np.where((objSum['filter']==b)&(objSum['rchi2']>10))[0]
+			bad = np.where(np.in1d(refCat['objId'],objSum['objId'][ii]))[0]
+			refCat[b][bad] = 99.99
+			print 'flagged ',len(bad),' noisy objects in band ',b
+		# restrict mag range
+		ii = np.where(((refCat['g']>17)&(refCat['g']<20.5)) |
+		              ((refCat['i']>17)&(refCat['i']<20.5)))[0]
+		refCat = refCat[ii]
+		print 'have ',len(refCat),' clean stars after mag cut'
+		# save the clean catalog
+		refCat.write(self.refCatFile)
+
+
+
+##############################################################################
+#
+# utilities for joining indexed tables (more efficient than table.join())
+#
+##############################################################################
+
 def map_ids(ids1,ids2):
 	ii = -np.ones(ids2.max()+1,dtype=int)
 	ii[ids2] = np.arange(len(ids2))
@@ -34,6 +161,14 @@ def join_by_frameid(tab1,tab2):
 
 def join_by_objid(tab1,tab2):
 	return join_by_id(tab1,tab2,'objId')
+
+
+
+##############################################################################
+#
+# aperture photometry routines
+#
+##############################################################################
 
 def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
                 inp,**kwargs):
@@ -83,20 +218,27 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 	allPhot = vstack(allPhot)
 	allPhot.write(catFile,overwrite=True)
 
-def aperture_phot(dataMap,refCat,procmap,inputType='sky',**kwargs):
+def aperture_phot(dataMap,photCat,procmap,inputType='sky',**kwargs):
 	kwargs.setdefault('mask_is_weight_map',False)
 	kwargs.setdefault('background','global')
 	aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 	catDir = os.path.join(dataMap.procDir,'catalogs')
 	if not os.path.exists(catDir):
 		os.mkdir(catDir)
-	catPfx = refCat['filePrefix']
-	refCat = refCat['catalog']
 	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
 	                         for filt in dataMap.iterFilters() ]
 	p_aper_worker = partial(aper_worker,dataMap,inputType,
-	                        aperRad,refCat,catDir,catPfx,**kwargs)
+	                        aperRad,photCat.refCat,catDir,photCat.name,
+	                        **kwargs)
 	procmap(p_aper_worker,utdlist)
+
+
+
+##############################################################################
+#
+# color terms
+#
+##############################################################################
 
 def load_full_ref_cat(phot,magRange=(17.,20.)):
 	cdir = os.environ['BOKRMDIR']
@@ -198,6 +340,13 @@ def calc_color_terms(t,band,aperNum=-2,ref='sdss',airmassLim=1.2,
 			ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.02))
 		if False:
 			fig.savefig('%s_%s_to_bok_gicolors.png'%(band,ref))
+
+
+##############################################################################
+#
+# zero points
+#
+##############################################################################
 
 def srcor(ra1,dec1,ra2,dec2,sep):
 	from astropy.coordinates import SkyCoord,match_coordinates_sky
@@ -310,16 +459,25 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	            dtype=('S8','i4','f4','f4','i4','f4','i4','f4'))
 	return tab
 
-def zero_points(dataMap,procmap,refCat,magRange=(17.,19.5),aperNum=-2):
+def zero_points(dataMap,procmap,photCat,magRange=(17.,19.5),aperNum=-2):
 	aperCatDir = os.path.join(dataMap.procDir,'catalogs')
 	utdlist = [ (utd,filt) for utd in dataMap.iterUtDates() 
 	                         for filt in dataMap.iterFilters() ]
 	p_zp_worker = partial(zp_worker,dataMap,aperCatDir,
-	                      refCat['catalog'],refCat['filePrefix'],
+	                      photCat.refCat,photCat.name,
 	                      magRange,aperNum)
 	tabs = procmap(p_zp_worker,utdlist)
 	tab = vstack(filter(None,tabs))
 	tab.write('bokrm_zeropoints.fits',overwrite=True)
+
+
+
+##############################################################################
+#
+# lightcurve construction: stack nightly aperture photometry into a single
+# table, applying zeropoint calibration to the raw counts
+#
+##############################################################################
 
 def match_to(ids1,ids2):
 	idx = { j:i for i,j in enumerate(ids2) }
@@ -342,8 +500,8 @@ def _read_old_catf(obsDb,catf):
 	                 'ccdNum','frameIndex'))
 	return t
 
-def stack_catalogs(dataMap,refCat,old=False):
-	pfx = refCat['filePrefix']
+def stack_catalogs(dataMap,photCat,old=False):
+	pfx = photCat.name
 	if old:
 		# renaming
 		pfx = {'sdssstars':'sdssbright'}.get(pfx,pfx)
@@ -372,14 +530,12 @@ def stack_catalogs(dataMap,refCat,old=False):
 	tab.sort(['objId','frameIndex'])
 	return tab
 
-def calibrate_lightcurves(lcTab,dataMap,refCat,minNstar=70,
-                          zpFile='bokrm_zeropoints.fits',outfn=None):
-	if outfn is None:
-		outfn = 'bokrmphot_%s.fits' % refCat['filePrefix']
-	if lcTab is None:
-		tab = stack_catalogs(dataMap,refCat)
+def calibrate_lightcurves(photCat,dataMap,minNstar=70,
+                          zpFile='bokrm_zeropoints.fits'):
+	if photCat.bokPhot is None:
+		tab = stack_catalogs(dataMap,photCat)
 	else:
-		tab = lcTab
+		tab = photCat.bokPhot
 	apDat = Table.read(zpFile)
 	ii = map_ids(tab['frameIndex'],apDat['frameIndex'])
 	print '--> ',len(tab),len(ii)
@@ -404,8 +560,9 @@ def calibrate_lightcurves(lcTab,dataMap,refCat,minNstar=70,
 	tab['aperFlux'] = flux.filled(0)
 	tab['aperFluxErr'] = fluxErr.filled(0)
 	tab = join_by_frameid(tab,dataMap.obsDb['frameIndex','airmass','mjd'])
-	print 'writing to ',outfn
-	tab.write(outfn,overwrite=True)
+	print 'writing to ',photCat.bokPhotFn
+	tab.write(photCat.bokPhotFn,overwrite=True)
+	photCat.bokPhot = tab
 
 def nightly_lightcurves(catName,lcs=None,redo=False):
 	from collections import defaultdict
@@ -459,6 +616,15 @@ def nightly_lightcurves(catName,lcs=None,redo=False):
 	tab['aperMagErr'] = err.filled(99.99)
 	tab.write(lcFn,overwrite=redo)
 
+
+
+##############################################################################
+#
+# aggregate photometry: index lightcurve table by object/filter(/mjd) and
+# calculate aggregate statistics (mean, rms, chi^2, etc.)
+#
+##############################################################################
+
 def map_group_to_items(tab):
 	'''Given an astropy.table.Table that has been grouped, return the
 	   set of indices that maps the groups back to the original table.
@@ -474,76 +640,48 @@ def map_group_to_items(tab):
 	              for i,ii in enumerate(zip(tab.groups.indices[:-1],
 	                                        tab.groups.indices[1:])) ] )
 
-def clipped_median_mag(phot,magkey='mag',rms=True):
+def calc_mean_mags(phot,magkey='aperMag',ivarkey='aperMagIvar',
+                   rms=True,median=False):
 	'''Given a grouped table and keys for the columns containing 
 	   magnitudes and inverse variances of the magnitudes, calculate
-	   the inverse-variance weighted mean magnitude.
+	   the inverse-variance weighted mean fluxes/magnitudes.
+	   Or, if median=True, calculate the median.
 	   Also return the scatter in the magnitudes if rms=True.
 	'''
-	mean_mag = phot[magkey].groups.aggregate(np.ma.median)
+	if median:
+		mean_mag = phot[magkey].groups.aggregate(np.ma.median)
+	else:
+		phot['wtmag'] = phot[magkey]*phot[ivarkey]
+		aggphot = phot['wtmag',ivarkey].groups.aggregate(np.ma.sum)
+		mean_mag = aggphot['wtmag']/aggphot[ivarkey]
+		del phot['wtmag']
 	if not rms:
 		return mean_mag
 	else:
 		photrms = phot[magkey].groups.aggregate(np.ma.std)
 		return mean_mag,photrms
-
-def weighted_mean_mag(phot,magkey='mag',ivarkey='ivar',rms=True):
-	'''Given a grouped table and keys for the columns containing 
-	   magnitudes and inverse variances of the magnitudes, calculate
-	   the inverse-variance weighted mean magnitude.
-	   Also return the scatter in the magnitudes if rms=True.
-	'''
-	phot['wtmag'] = phot[magkey]*phot[ivarkey]
-	aggphot = phot['wtmag',ivarkey].groups.aggregate(np.ma.sum)
-	mean_mag = aggphot['wtmag']/aggphot[ivarkey]
-	if not rms:
-		return mean_mag
-	else:
-		photrms = phot[magkey].groups.aggregate(np.ma.std)
-		return mean_mag,photrms
-
-def load_masked_phot(lcTab,apNum=2,maskBits=None):
-	phot = Table(lcTab,masked=True)
-	phot.meta['APERNUM'] = apNum
-	phot.meta['MASKBITS'] = str(maskBits)
-	# select aperture (aggregate functions collapse along 2nd dim)
-	phot['mag'] = phot['aperMag'][:,apNum]
-	phot['err'] = phot['aperMagErr'][:,apNum]
-	phot['flag'] = phot['flags'][:,apNum]
-	# reduce to only the necessary columns
-	phot = phot['frameIndex','objId','mjd','filter','mag','err','flag']
-	# add masks
-	if maskBits is None:
-		maskBits = 2**32-1
-	mask = (phot['mag']>90) | (phot['err']==0) | ((phot['flag']&maskBits)>0)
-	phot['mag'].mask |= mask
-	phot['err'].mask |= mask
-	phot['ivar'] = np.ma.power(phot['err'],-2)
-	return phot
 
 def calc_aggregate_phot(phot,clip=True,sigma=3.0,iters=3):
 	ii = map_group_to_items(phot)
 	if clip:
 		# have to do sigma-clipping by hand
-		mean_mag,rms_mag = clipped_median_mag(phot)
-		phot['clipped_mag'] = phot['mag'].copy()
-		phot['clipped_ivar'] = phot['ivar'].copy()
+		phot['clipped_mag'] = phot['aperMag'].copy()
+		phot['clipped_ivar'] = phot['aperMagIvar'].copy()
 		for iterNum in range(iters):
+			mean_mag,rms_mag = calc_mean_mags(phot,median=True)
 			dmag = phot['clipped_mag'] - mean_mag[ii]
 			dev = np.ma.abs(dmag/rms_mag[ii])
 			reject = np.ma.greater(dev,sigma)
 			phot['clipped_mag'].mask |= reject
 			phot['clipped_ivar'].mask |= reject
-			mean_mag,rms_mag = clipped_median_mag(phot)
-		mean_mag,rms_mag = weighted_mean_mag(phot,
-		                                     'clipped_mag','clipped_ivar')
+		mean_mag,rms_mag = calc_mean_mags(phot,'clipped_mag','clipped_ivar')
 	else:
-		mean_mag,rms_mag = weighted_mean_mag(phot)
+		mean_mag,rms_mag = calc_mean_mags(phot)
 	# get chi^2 using weighted mean
-	phot['dmag'] = phot['mag'] - mean_mag[ii]
-	phot['chival'] = phot['dmag']*np.ma.sqrt(phot['ivar'])
-	phot['chi2'] = phot['dmag']**2*phot['ivar']
-	phot['n'] = ~phot['mag'].mask
+	phot['dmag'] = phot['aperMag'] - mean_mag[ii]
+	phot['chival'] = phot['dmag']*np.ma.sqrt(phot['aperMagIvar'])
+	phot['chi2'] = phot['dmag']**2*phot['aperMagIvar']
+	phot['n'] = ~phot['aperMag'].mask
 	if clip:
 		dmag = phot['clipped_mag'] - mean_mag[ii]
 		phot['clipped_chi2'] = dmag**2*phot['clipped_ivar']
@@ -559,7 +697,7 @@ def calc_aggregate_phot(phot,clip=True,sigma=3.0,iters=3):
 	aggphot['rchi2'] = aggphot['chi2']/(aggphot['n']-1)
 	aggphot['clipped_rchi2'] = aggphot['clipped_chi2']/(aggphot['clipped_n']-1)
 	# cleanup intermediate columns used during aggregation
-	del phot['wtmag','clipped_mag','clipped_ivar','clipped_chi2','clipped_n']
+	del phot['clipped_mag','clipped_ivar','clipped_chi2','clipped_n']
 	return phot,aggphot
 
 def aggregate_phot_byobj(phot,**kwargs):
@@ -573,24 +711,41 @@ def aggregate_phot_nightly(phot,**kwargs):
 	phot = phot.group_by(['objId','filter','mjdInt'])
 	return calc_aggregate_phot(phot,**kwargs)
 
-def aggregate_phot(lcTab,refCat,which,**kwargs):
-	phot = load_masked_phot(lcTab)
+def aggregate_phot(photCat,which,aperNum=2,**kwargs):
+	photCat.apply_flag_mask()
+	phot = photCat.get_aperture_table(aperNum)
 	if which=='all':
 		phot,aggPhot = aggregate_phot_byobj(phot,**kwargs)
 	elif which=='nightly':
 		phot,aggPhot = aggregate_phot_nightly(phot,**kwargs)
 	# XXX why aren't masks carrying through here?
-	phot.write('photsum_%s_%s.fits' % (refCat['filePrefix'],which),
+	phot.write('photsum_%s_%s.fits' % (photCat.name,which),
 	           overwrite=True)
-	aggPhot.write('agg_phot_%s_%s.fits' % (refCat['filePrefix'],which),
+	aggPhot.write('agg_phot_%s_%s.fits' % (photCat.name,which),
 	              overwrite=True)
+
+aperPhotKeys = [ 'aper'+k1+k2 for k1 in ['Mag','Flux'] 
+                                for k2 in ['','Err','Ivar'] ]
 
 def load_agg_phot(aggPhotFn):
 	phot = Table.read(aggPhotFn)
 	# XXX why aren't masks carrying through here?
-	for k in ['mag','err','ivar','dmag','chival','chi2']:
+	for k in aperPhotKeys+['dmag','chival','chi2']:
 		phot[k].mask |= ~phot['n']
 	return phot
+
+ 
+
+##############################################################################
+#
+# outlier flagging: use aggregate photometry to identify outliers
+#
+##############################################################################
+
+def identify_bad_frames(frameStats,maxOutlierFrac=0.01):
+	isbadframe = frameStats['outlierFrac'] > maxOutlierFrac
+	badFrames = frameStats['frameIndex'][isbadframe]
+	return badFrames
 
 def find_outliers(phot,thresh):
 	chival = phot['chival'].filled(0)
@@ -603,17 +758,44 @@ def find_outliers(phot,thresh):
 
 def find_star_outliers(starPhot,fthresh=10.0,othresh=5.0):
 	fgroup = starPhot.group_by('frameIndex')
-	frameBad = find_outliers(fgroup,fthresh)
+	frameStats = find_outliers(fgroup,fthresh)
 	ogroup = starPhot.group_by(['objId','filter'])
-	objBad = find_outliers(ogroup,othresh)
-	return frameBad,objBad
+	# tag the bad frames before tagging lightcurve outliers
+	badFrames = identify_bad_frames(frameStats)
+	isbad = np.in1d(ogroup['frameIndex'],badFrames)
+	for k in aperPhotKeys+['dmag','chival','chi2']:
+		ogroup[k].mask |= isbad
+	ogroup['n'] |= isbad
+	objStats = find_outliers(ogroup,othresh)
+	return frameStats,objStats
+
+def __fill_summary_list(psum):
+	psum['n'].fill_value = 0
+	psum['outlier'].fill_value = 0
+	psum['outlierFrac'].fill_value = 1.0
+	psum['chi2'].fill_value = 99999.99
+	psum['rchi2'].fill_value = 99999.99
+	return psum.filled()
+
+def update_framelist_withoutliers(frameStats):
+	frameListFile = 'data/BokRMFrameList.fits.gz'
+	frameList = Table.read(frameListFile)
+	try:
+		frameList.remove_columns(['n','outlier','chi2','outlierFrac','rchi2'])
+	except:
+		pass
+	frameList = join(frameList,frameStats,'frameIndex','outer')
+	__fill_summary_list(frameList).write(frameListFile,overwrite=True)
+
+def write_object_badlist(objStats,frameStats,outfn):
+	__fill_summary_list(objStats).write(outfn,overwrite=True)
 
 # psum2 = psum.group_by('filter')['objId','mean_mag','rms_mag']
 # merged = join(psum2.groups[0].filled(),psum2.groups[1].filled(),'objId',table_names=list(psum2.groups.keys['filter']))
 # m = join(merged,sdss,'objId')
 # scatter(m['g']-m['i'],m['mean_mag_g']-m['mean_mag_i'],s=1)
 
-def load_catalog(catName):
+def old_load_target_catalog(catName):
 	dataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
 	if catName == 'sdssrm':
 		cat = Table.read(os.path.join(dataDir,'target_fibermap.fits'),1)
@@ -638,6 +820,18 @@ def load_catalog(catName):
 	else:
 		raise ValueError
 	return dict(catalog=cat,filePrefix=catPfx)
+
+def load_target_catalog(target,catdir,photfile):
+	if catdir is None: catdir='.'
+	targets = {
+	  'sdssrm':RmQsoCatalog,
+	  #'allqsos':AllQsoCatalog,
+	  'sdssall':SdssStarCatalog,
+	  'sdss':CleanSdssStarCatalog,
+	  #'sdssold':SdssStarCatalogOld,
+	  #'cfht':CfhtStarCatalog,
+	}
+	return targets[target](catdir=catdir,photfile=photfile)
 
 if __name__=='__main__':
 	import argparse
@@ -667,13 +861,16 @@ if __name__=='__main__':
 	                help='lightcurve table')
 	parser.add_argument('--zptable',type=str,default='bokrm_zeropoints.fits',
 	                help='zeropoints table')
-	parser.add_argument('--outfile',type=str,
-	                help='output file')
+	parser.add_argument('--catdir',type=str,
+	                help='directory containing photometry catalogs')
+#	parser.add_argument('--outfile',type=str,
+#	                help='output file')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
 	dataMap = bokrmpipe.config_rm_data(dataMap,args)
-	refCat = load_catalog(args.catalog)
+	photCat = load_target_catalog(args.catalog,args.catdir,args.lctable)
+	photCat.load_ref_catalog()
 	if args.processes == 1:
 		procmap = map
 	else:
@@ -681,26 +878,22 @@ if __name__=='__main__':
 		procmap = pool.map
 	timerLog = bokutil.TimerLog()
 	if args.aperphot:
-		aperture_phot(dataMap,refCat,procmap,redo=args.redo,
+		aperture_phot(dataMap,photCat,procmap,redo=args.redo,
 		              background=args.background)
 		timerLog('aper phot')
 	elif args.lightcurves:
-		if args.lctable:
-			lcTab = Table.read(args.lctable)
-		else:
-			lcTab = None
-		calibrate_lightcurves(lcTab,dataMap,refCat,zpFile=args.zptable,
-		                      outfn=args.outfile)#,old=args.old)
+		photCat.load_bok_phot(nogroup=True)
+		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable)
 		timerLog('lightcurves')
 	elif args.aggregate:
-		lcTab = Table.read(args.lctable)
+		photCat.load_bok_phot(nogroup=True)
 		which = 'nightly' if args.nightly else 'all'
-		aggregate_phot(lcTab,refCat,which)#,**kwargs)
+		aggregate_phot(photCat,which)#,**kwargs)
 #	elif args.nightly:
 #		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('aggregate phot')
 	elif args.zeropoint:
-		zero_points(dataMap,procmap,refCat)
+		zero_points(dataMap,procmap,photCat)
 		timerLog('zeropoints')
 	timerLog.dump()
 	if args.processes > 1:

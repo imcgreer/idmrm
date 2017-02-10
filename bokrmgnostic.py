@@ -498,9 +498,9 @@ def check_bias_ramp(dataMap):
 		break
 	plt.show()
 
-def image_cutouts(dataMap,catFile,refCat,band='g',objid=None,old=False):
+def image_cutouts(dataMap,photCat,band='g',objid=None,old=False):
 	from astropy.nddata import Cutout2D
-	objs = Table.read(catFile)
+	objs = photCat.bokPhot
 	try:
 		objs['frameIndex'] = objs['frameId']
 	except:
@@ -526,7 +526,7 @@ def image_cutouts(dataMap,catFile,refCat,band='g',objid=None,old=False):
 	for k,obj in zip(objs.groups.keys,objs.groups):
 		objId = k['objId']
 		band = k['filter']
-		cutfile = outdir+'bok%s%03d_%s.fits'%(refCat['filePrefix'],objId,band)
+		cutfile = outdir+'bok%s%03d_%s.fits'%(photCat.name,objId,band)
 		if os.path.exists(cutfile) or len(obj)==0:
 			continue
 		hdus = [ fits.PrimaryHDU() ]
@@ -553,13 +553,14 @@ def image_cutouts(dataMap,catFile,refCat,band='g',objid=None,old=False):
 			                             hdr0['OBJECT']])
 			hdus.append(fits.ImageHDU(cutobj.data,newhdr))
 		fits.HDUList(hdus).writeto(cutfile)
+	print
 
-def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
+def image_thumbnails(dataMap,photCat,band='g',objid=None,
                      nbin=None,old=False,trim=None):
 	from astropy.visualization import ZScaleInterval
 	from matplotlib.backends.backend_pdf import PdfPages
 	# load object database
-	objs = Table.read(catFile)
+	objs = photCat.bokPhot
 	try:
 		objs['frameIndex'] = objs['frameId']
 	except:
@@ -583,7 +584,7 @@ def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
 	else:
 		outdir = 'bokcutouts/'
 	ccdcolors = ['darkblue','darkgreen','darkred','darkmagenta']
-	if True and refCat['filePrefix']=='rmqso':
+	if True and photCat.name=='rmqso':
 		diffphot = Table.read('bok%s_photflags.fits'%band)
 		errlog = open('bokflags_%s_err.log'%band,'a')
 		bitstr = [ 'TinyFlux','BigFlux','TinyErr','BigErr','BigOff']
@@ -604,9 +605,9 @@ def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
 		objId = k['objId']
 		_band = k['filter']
 		if _band != band: continue
-		if refCat['filePrefix']=='rmqso' and objId >= 850:
+		if photCat.name=='rmqso' and objId >= 850:
 			break
-		cutfile = outdir+'bok%s%03d_%s.fits' % (refCat['filePrefix'],
+		cutfile = outdir+'bok%s%03d_%s.fits' % (photCat.name,
 		                                        obj['objId'][0],band)
 		pdffile = cutfile.replace('.fits','.pdf')
 		if os.path.exists(pdffile) or len(obj)==0:
@@ -675,7 +676,7 @@ def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
 				t = ax.text(0.03,0.7,'%d' % obs['flags'][2],
 				            size=10,ha='left',va='top',color='red',
 				            transform=ax.transAxes)
-			if True and refCat['filePrefix']=='rmqso':
+			if True and photCat.name=='rmqso':
 				_j = np.where(diffphot['frameIndex'][objId] ==
 				              obs['frameIndex'])[0]
 				if len(_j)>0:
@@ -693,7 +694,7 @@ def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
 			ax.xaxis.set_visible(False)
 			ax.yaxis.set_visible(False)
 			pnum += 1
-		if True and refCat['filePrefix']=='rmqso':
+		if True and photCat.name=='rmqso':
 			jj = np.where(~matched[objId])[0]
 			if len(jj)>0:
 				errlog.write('unmatched for %d:\n'%objId)
@@ -706,9 +707,8 @@ def image_thumbnails(dataMap,catFile,refCat,band='g',objid=None,
 		except:
 			pass
 		pdf.close()
-	print
 	plt.ion()
-	if True and refCat['filePrefix']=='rmqso':
+	if True and photCat.name=='rmqso':
 		errlog.close()
 
 if __name__=='__main__':
@@ -744,25 +744,29 @@ if __name__=='__main__':
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	refCat = bokrmphot.load_catalog(args.refcatalog)
+	photCat = bokrmphot.load_target_catalog(args.refcatalog,None,
+	                                        args.catalog)
+	photCat.load_ref_catalog()
 	if args.datasum:
 		dump_data_summary(dataMap)
-	elif args.checkproc:
+	if args.checkproc:
 		check_processed_data(dataMap)
-	elif args.calcsky:
+	if args.calcsky:
 		calc_sky_backgrounds(dataMap,args.calcsky)
-	elif args.metadata:
+	if args.metadata:
 		rmobs_meta_data(dataMap)
-	elif args.checkramp:
+	if args.checkramp:
 		check_bias_ramp(dataMap)
-	elif args.checkgains:
+	if args.checkgains:
 		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb)
-	elif args.cutouts:
-		image_cutouts(dataMap,args.catalog,refCat,band=args.band,
+	if args.cutouts:
+		photCat.load_bok_phot()
+		image_cutouts(dataMap,photCat,band=args.band,
 		              objid=args.objid,old=args.old)
-	elif args.thumbnails:
+	if args.thumbnails:
 		if args.band is None:
 			raise ValueError("must specify filter (g or i)")
-		image_thumbnails(dataMap,args.catalog,refCat,band=args.band,
+		photCat.load_bok_phot()
+		image_thumbnails(dataMap,photCat,band=args.band,
 		                 objid=args.objid,nbin=args.nbin,old=args.old)
 
