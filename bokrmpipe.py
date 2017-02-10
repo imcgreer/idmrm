@@ -96,10 +96,20 @@ def make_obs_db(args):
 		bad = [ 'bok.20140115.%04d' % _i for _i in [3] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       trailed image
+		bad = [ 'bokrm.20140118.%04d' % _i for _i in [130] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       trailed image
 		bad = [ 'bokrm.20140123.%04d' % _i for _i in [201] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       telescope was moving
+		bad = [ 'bokrm.20140129.%04d' % _i for _i in [123] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       telescope was moving
+		bad = [ 'bokrm.20140215.%04d' % _i for _i in [140] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       lots of passing clouds with saturated ims this night
-		bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,144,145,146,147,
+		#       #124 - telescope was moving
+		bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,124,144,145,146,147,
 		                                              150,152,153,158] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #173 telescope was moving
@@ -115,11 +125,14 @@ def make_obs_db(args):
 		#       trailed image
 		bad = [ 'bokrm.20140514.%04d' % _i for _i in [104,116] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       double image, telescope jumped
+		bad = [ 'bokrm.20140518.%04d' % _i for _i in [114] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       #181 telescope was moving
 		bad = [ 'bokrm.20140609.%04d' % _i for _i in [181] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #171 telescope was moving
-		bad = [ 'bokrm.20140610.%04d' % _i for _i in [171] ]
+		#       #116,171 telescope was moving
+		bad = [ 'bokrm.20140610.%04d' % _i for _i in [116,171] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
 		#       lots of passing clouds with saturated ims this night
 		bad = [ 'bokrm.20140612.%04d' % _i for _i in [88,89,90,102,103,104,
