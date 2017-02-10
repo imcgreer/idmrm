@@ -33,7 +33,7 @@ Post-processing steps: astrometric solutions, sextractor and aperture photometry
 
 Determine SDSS zeropoints and generate lightcurves for SDSS reference stars:
 
-`make -f Makefile.2014 wcs zeropoints_sdss lightcurves_sdss`
+`make -f Makefile.2014 zeropoints_sdss lightcurves_sdss lightcurves_rm`
 
 Generate the meta-data table (zeropoints and other metrics for each image)
 
