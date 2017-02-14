@@ -96,6 +96,13 @@ class RmQsoCatalog(RmPhotCatalog):
 			self.refCat.rename_column('RA','ra')
 			self.refCat.rename_column('DEC','dec')
 
+class AllQsoCatalog(RmPhotCatalog):
+	name = 'allqso'
+	def __init__(self,**kwargs):
+		super(AllQsoCatalog,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.sdssRmDataDir,
+		                               'allqsos_rmfield.fits')
+
 class SdssStarCatalog(RmPhotCatalog):
 	name = 'sdssstars'
 	def __init__(self,**kwargs):
@@ -201,6 +208,13 @@ class CleanSdssStarCatalog(SdssStarCatalog):
 		print 'have ',len(refCat),' clean stars after mag cut'
 		# save the clean catalog
 		refCat.write(self.refCatFile)
+
+class CfhtStarCatalog(RmPhotCatalog):
+	name = 'cfhtstars'
+	def __init__(self,**kwargs):
+		super(CfhtStarCatalog,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.sdssRmDataDir,
+		                               'CFHTLSW3_starcat.fits')
 
 
 
@@ -458,7 +472,6 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	psfZps = np.zeros_like(aperZps)
 	psfNstar = np.zeros_like(aperNstar)
 	for n,(f,i) in enumerate(zip(files,frames)):
-		#expTime =  dataMap.obsDb['expTime'][i]
 		frameId =  dataMap.obsDb['frameIndex'][i]
 		ii = np.where(aperCat['frameIndex']==frameId)[0]
 		if len(ii)==0:
@@ -561,9 +574,10 @@ def _read_old_catf(obsDb,catf):
 	fns = [ f[:f.find('_ccd')] for f in dat1['fileName'] ]
 	ii = match_to(fns,obsDb['fileName'])
 	frameId = obsDb['frameIndex'][ii]
+	texp = obsDb['expTime'][ii][:,np.newaxis]
 	t = Table([dat1['x'],dat1['y'],idx,
-	           dat1['aperCounts'],dat1['aperCountsErr'],dat1['flags'],
-	           dat1['ccdNum'],frameId],
+	           dat1['aperCounts']/texp,dat1['aperCountsErr']/texp,
+	           dat1['flags'],dat1['ccdNum'],frameId],
 	          names=('x','y','objId','counts','countsErr','flags',
 	                 'ccdNum','frameIndex'))
 	return t
@@ -572,7 +586,7 @@ def stack_catalogs(dataMap,photCat,old=False):
 	pfx = photCat.name
 	if old:
 		# renaming
-		pfx = {'sdssstars':'sdssbright'}.get(pfx,pfx)
+		pfx = {'sdssstarsold':'sdssbright'}.get(pfx,pfx)
 		aperCatDir = os.environ['HOME']+'/data/projects/SDSS-RM/rmreduce/catalogs_v2b/'
 	else:
 		aperCatDir = os.path.join(dataMap.procDir,'catalogs')
@@ -599,21 +613,21 @@ def stack_catalogs(dataMap,photCat,old=False):
 	return tab
 
 def calibrate_lightcurves(photCat,dataMap,minNstar=70,
-                          zpFile='bokrm_zeropoints.fits'):
+                          zpFile='bokrm_zeropoints.fits',old=False):
 	if photCat.bokPhot is None:
-		tab = stack_catalogs(dataMap,photCat)
+		tab = stack_catalogs(dataMap,photCat,old=old)
 	else:
 		tab = photCat.bokPhot
-	apDat = Table.read(zpFile)
-	ii = map_ids(tab['frameIndex'],apDat['frameIndex'])
+	zpDat = Table.read(zpFile)
+	ii = map_ids(tab['frameIndex'],zpDat['frameIndex'])
 	print '--> ',len(tab),len(ii)
 	nAper = tab['counts'].shape[-1]
 	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
 	# cannot for the life of me figure out how to do this with indexing
 	for apNum in range(nAper):
 		apCorr[np.arange(len(ii)),apNum] = \
-		            apDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
-	zp = np.ma.array(apDat['aperZp'][ii],mask=apDat['aperNstar'][ii]<minNstar)
+		            zpDat['aperCorr'][ii,apNum,tab['ccdNum']-1]
+	zp = np.ma.array(zpDat['aperZp'][ii],mask=zpDat['aperNstar'][ii]<minNstar)
 	zp = zp[np.arange(len(ii)),tab['ccdNum']-1][:,np.newaxis]
 	corrCps = tab['counts'] * apCorr 
 	poscounts = np.ma.array(corrCps,mask=tab['counts']<=0)
@@ -814,7 +828,8 @@ def binned_phot_stats(which='cleanstars',**kwargs):
 		phot = SdssStarCatalogOld(catdir='archive/bokrmpipe_old/',
 		                          photfile='lightcurves_g.fits')
 	elif which=='Sep2014':
-		raise NotImplementedError
+		phot = SdssStarCatalogOld(#catdir='archive/bokrmpipe_old/',
+		                          photfile='bokrmphot_sdssstars_Sep14.fits')
 	if which=='Nov2015':
 		phot.load_bok_phot(nogroup=True)
 		phot.bokPhot['filter'] = 'g'
@@ -886,41 +901,22 @@ def write_object_badlist(objStats,frameStats,outfn):
 # m = join(merged,sdss,'objId')
 # scatter(m['g']-m['i'],m['mean_mag_g']-m['mean_mag_i'],s=1)
 
-def old_load_target_catalog(catName):
-	dataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
-	if catName == 'sdssrm':
-		cat = Table.read(os.path.join(dataDir,'target_fibermap.fits'),1)
-		cat.rename_column('RA','ra')
-		cat.rename_column('DEC','dec')
-		catPfx = 'rmqso'
-	elif catName == 'allqsos':
-		cat = Table.read(os.path.join(dataDir,'allqsos_rmfield.fits'),1)
-		catPfx = 'allqso'
-	elif catName == 'sdss':
-		rmdir = os.environ['BOKRMDIR']
-		catfn = os.path.join(rmdir,'data','sdssRefStars_DR13.fits.gz')
-		print 'loading references from sdssRefStars_DR13.fits.gz'
-		cat = Table.read(catfn,1)
-		catPfx = 'sdssstars'
-	elif catName == 'sdssold':
-		cat = Table.read(os.path.join(dataDir,'sdss.fits'),1)
-		catPfx = 'sdssstarsold'
-	elif catName == 'cfht':
-		cat = Table.read(os.path.join(dataDir,'CFHTLSW3_starcat.fits'),1)
-		catPfx = 'cfhtstars'
-	else:
-		raise ValueError
-	return dict(catalog=cat,filePrefix=catPfx)
+
+##############################################################################
+#
+# main()
+#
+##############################################################################
 
 def load_target_catalog(target,catdir,photfile):
 	if catdir is None: catdir='.'
 	targets = {
 	  'sdssrm':RmQsoCatalog,
-	  #'allqsos':AllQsoCatalog,
+	  'allqsos':AllQsoCatalog,
 	  'sdssall':SdssStarCatalog,
 	  'sdss':CleanSdssStarCatalog,
 	  'sdssold':SdssStarCatalogOld,
-	  #'cfht':CfhtStarCatalog,
+	  'cfht':CfhtStarCatalog,
 	}
 	return targets[target](catdir=catdir,photfile=photfile)
 
@@ -974,7 +970,7 @@ if __name__=='__main__':
 		timerLog('aper phot')
 	elif args.lightcurves:
 		photCat.load_bok_phot(nogroup=True)
-		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable)
+		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,old=args.old)
 		timerLog('lightcurves')
 	elif args.aggregate:
 		photCat.load_bok_phot(nogroup=True)
