@@ -41,6 +41,8 @@ class RmPhotCatalog(object):
 	def load_ref_catalog(self):
 		if self.refCat is None:
 			self.refCat = Table.read(self.refCatFile)
+		if 'objId' not in self.refCat.colnames:
+			self.refCat['objId']  = np.arange(len(self.refCat))
 	def apply_frame_mask(self):
 		frameList = Table.read(self.frameListFile)
 		badFrames = identify_bad_frames(frameList)
@@ -59,11 +61,14 @@ class RmPhotCatalog(object):
 			self.bokPhot = Table(Table.read(self.bokPhotFn),masked=True)
 		except IOError:
 			return None
+		if 'frameId' in self.bokPhot.colnames:
+			self.bokPhot.rename_column('frameId','frameIndex')
 		# XXX this is here because the table is currently saved unmasked
 		mask = self.bokPhot['aperFlux'] == 0
 		self.bokPhot['aperFlux'].mask |= mask
 		self.bokPhot['aperFluxErr'].mask |= mask
-		mask = self.bokPhot['aperMag'] > 90
+		mask = ( self.bokPhot['aperMag'] > 90 | 
+		         np.isnan(self.bokPhot['aperMag']) )
 		self.bokPhot['aperMag'].mask |= mask
 		self.bokPhot['aperMagErr'].mask |= mask
 		if not nogroup:
@@ -97,6 +102,69 @@ class SdssStarCatalog(RmPhotCatalog):
 		super(SdssStarCatalog,self).__init__(**kwargs)
 		self.refCatFile = os.path.join(self.bokRmDataDir,
 		                               'sdssRefStars_DR13.fits.gz')
+	def bin_stats_by_ref_mag(self,band='g',aperNum=3,binEdges=None):
+		if binEdges is None:
+			binEdges = np.arange(16.9,19.11,0.2)
+		mbins = binEdges[:-1] + np.diff(binEdges)/2
+		nbins = len(mbins)
+		# group the reference objects into magnitude bins using ref mag
+		self.load_ref_catalog()
+		binNum = np.digitize(self.refCat[band],binEdges)
+		ii = np.where((binNum>=1) & (binNum<=nbins))[0]
+		refCat = self.refCat['objId',band][ii].copy()
+		refCat['binNum'] = binNum[ii] - 1
+		#
+		phot = self.get_aperture_table(aperNum)
+		phot = phot[(phot['filter']==band) & 
+		            np.in1d(phot['objId'],refCat['objId']) ]
+		objGroup = phot.group_by('objId')
+		#
+		n = np.array([(~g['aperMag'].mask).sum() for g in objGroup.groups])
+		ii = map_group_to_items(objGroup)
+		phot['n'] = n[ii]
+		phot = phot[phot['n']>10]
+		objGroup = phot.group_by('objId')
+		#
+		aggPhot = join_by_objid(objGroup.groups.keys,refCat)
+		ii = map_group_to_items(objGroup)
+		mean_mag,rms_mag = calc_mean_mags(objGroup,median=True)
+		aggPhot['meanMag'] = mean_mag
+		aggPhot['rmsInt'] = rms_mag
+		objGroup['dmagExt'] = objGroup['aperMag'] - aggPhot[band][ii]
+		objGroup['dmagInt'] = objGroup['aperMag'] - mean_mag[ii]
+		dev = np.ma.divide(objGroup['dmagInt'],rms_mag[ii])
+		objGroup['outlier'] =  np.ma.greater(dev,5.0)
+		objGroup['n'] = ~dev.mask
+		objGroup['dmagIntClip'] = objGroup['dmagInt'].copy()
+		objGroup['dmagIntClip'].mask |= objGroup['outlier']
+		aggPhot['rmsIntClip'] = objGroup['dmagIntClip'].groups.aggregate(
+		                                                           np.ma.std)
+		outies = objGroup['outlier','n'].groups.aggregate(np.ma.sum)
+		aggPhot['outlierFrac'] = outies['outlier']/outies['n'].astype(float)
+		binAggPhot = aggPhot.group_by('binNum')
+		binGroup = Table(binAggPhot.groups.keys)
+		binGroup['mbins'] = mbins
+		perc = lambda x,p: np.percentile(x.compressed(),p)
+		for p in [25,50,75]:
+			for s in ['','Clip']:
+				pc = binAggPhot['rmsInt'+s].groups.aggregate(
+				                                     lambda x: perc(x,p))
+				binGroup['sig%d%s'%(p,s)] = pc
+		binGroup['outlierFrac'] = binAggPhot['outlierFrac'].groups.aggregate(
+		                                                        np.ma.mean)
+		# external accuracy in mag bins
+#		allAggPhot = objGroup.group_by('binNum')
+#		binExtOff = allAggPhot['dmagExt'].groups.aggregate(np.ma.median)
+#		binExtRms = allAggPhot['dmagExt'].groups.aggregate(np.ma.std)
+#		binGroup['median_dmagExt'] = binExtOff
+#		binGroup['rmsExt'] = binExtRms
+		return binGroup
+
+class SdssStarCatalogOld(SdssStarCatalog):
+	name = 'sdssstarsold'
+	def __init__(self,**kwargs):
+		super(SdssStarCatalogOld,self).__init__(**kwargs)
+		self.refCatFile = os.path.join(self.sdssRmDataDir,'sdss.fits')
 
 class CleanSdssStarCatalog(SdssStarCatalog):
 	name = 'sdssrefstars'
@@ -651,9 +719,9 @@ def calc_mean_mags(phot,magkey='aperMag',ivarkey='aperMagIvar',
 	if median:
 		mean_mag = phot[magkey].groups.aggregate(np.ma.median)
 	else:
-		phot['wtmag'] = phot[magkey]*phot[ivarkey]
+		phot['wtmag'] = phot[magkey] * phot[ivarkey]
 		aggphot = phot['wtmag',ivarkey].groups.aggregate(np.ma.sum)
-		mean_mag = aggphot['wtmag']/aggphot[ivarkey]
+		mean_mag = aggphot['wtmag'] / aggphot[ivarkey]
 		del phot['wtmag']
 	if not rms:
 		return mean_mag
@@ -734,6 +802,29 @@ def load_agg_phot(aggPhotFn):
 		phot[k].mask |= ~phot['n']
 	return phot
 
+
+def binned_phot_stats(which='cleanstars',**kwargs):
+	if which=='cleanstars':
+		phot = CleanSdssStarCatalog()
+	elif which=='allstars':
+		phot = SdssStarCatalog(catdir='archive/run2data/')
+	elif which=='Jan2017':
+		phot = SdssStarCatalog(catdir='archive/run1data/')
+	elif which=='Nov2015':
+		phot = SdssStarCatalogOld(catdir='archive/bokrmpipe_old/',
+		                          photfile='lightcurves_g.fits')
+	elif which=='Sep2014':
+		raise NotImplementedError
+	if which=='Nov2015':
+		phot.load_bok_phot(nogroup=True)
+		phot.bokPhot['filter'] = 'g'
+		phot.bokPhot = phot.bokPhot.group_by(['objId','filter'])
+	else:
+		phot.load_bok_phot()
+	phot.apply_flag_mask()
+	phot.apply_frame_mask()
+	bs = phot.bin_stats_by_ref_mag(**kwargs)
+	return bs
  
 
 ##############################################################################
@@ -828,7 +919,7 @@ def load_target_catalog(target,catdir,photfile):
 	  #'allqsos':AllQsoCatalog,
 	  'sdssall':SdssStarCatalog,
 	  'sdss':CleanSdssStarCatalog,
-	  #'sdssold':SdssStarCatalogOld,
+	  'sdssold':SdssStarCatalogOld,
 	  #'cfht':CfhtStarCatalog,
 	}
 	return targets[target](catdir=catdir,photfile=photfile)
