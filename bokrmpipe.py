@@ -140,6 +140,9 @@ def make_obs_db(args):
 		                                              113,114,115,119,120,
 		                                              121,122,123] ]
 		good[np.in1d(obsDb['fileName'],bad)] = False
+		#       bad read, looks like aborted exposure
+		bad = [ 'd7467.%04d' % _i for _i in [101] ]
+		good[np.in1d(obsDb['fileName'],bad)] = False
 		# write the edited table
 		obsDb['good'] = good
 		obsDb.write(fullObsDbFile,overwrite=True)
