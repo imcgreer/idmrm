@@ -12,8 +12,11 @@ ifndef PROCARGS
 	PROCARGS := --nousepixflat --rampcorr --noweightmap
 endif
 
-INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            $(MPARGS) $(VERBOSE)
+DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) 
+
+INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
+
+SKYFLATARGS := --masterfringe --masterskyflat
 
 
 # run the pipeline on g-band dark night to look at CCD3 gradient by only doing

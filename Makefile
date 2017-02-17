@@ -34,22 +34,21 @@ DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS)
 
 INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 
+BOKRMPIPE := python bokrmpipe.py
+BOKRMPHOT := python bokrmphot.py
+
 all_detrend: initproc badpix proc1 makeillum flats proc2
 
 obsdb:
-	python bokrmpipe.py --makeobsdb $(LOGARGS) $(DATAARGS) -R
+	$(BOKRMPIPE) --makeobsdb $(LOGARGS) $(DATAARGS) -R
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s oscan,bias2d,flat2d \
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s oscan,bias2d,flat2d $(XARGS)
 
 # Generate the bias ramp image (<=2015 data)
 biasramp:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s ramp \
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s ramp $(XARGS)
 
 # XXX copy in a master bp mask from config dir
 badpix:
@@ -57,15 +56,11 @@ badpix:
 
 # First-round processing: bias/domeflat correction, combine into CCD extensions
 proc1:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s proc1 \
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s proc1 $(XARGS)
 
 # Make the illumination correction image
 makeillum:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s illum 
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s illum $(XARGS)
 
 #
 # Sky flat generation (processing output to temp directory)
@@ -73,99 +68,93 @@ makeillum:
 
 #  ... apply the illumination correction to the sky flat images
 flats_illumcorr:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc2 --prockey TMPPRO2 \
-	                    --nofringecorr --noskyflatcorr \
-	                    --noskysub --noweightmap \
-	                    --nodivideexptime \
-	                    --darkskyframes --tmpdirout 
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s proc2 --prockey TMPPRO2 \
+	             --nofringecorr --noskyflatcorr \
+	             --noskysub --noweightmap --nodivideexptime \
+	             --skyflatframes --tmpdirout \
+	             $(XARGS)
 
 #  ... make fringe masters from sky flat images
 flats_makefringe:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s fringe \
-	                    --darkskyframes --tmpdirin --tmpdirout 
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s fringe \
+	             $(SKYFLATARGS) --skyflatframes --tmpdirin --tmpdirout \
+	             $(XARGS)
 
 # ... apply fringe correction to sky flat images
 flats_fringeskycorr:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s proc2 --prockey TMPPRO3 \
-	                    --noillumcorr --noskyflatcorr --noweightmap \
-	                    --skymethod polynomial --skyorder 1 \
-	                    --nodivideexptime \
-	                    --darkskyframes --tmpdirin --tmpdirout 
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) \
+	             -s proc2 --prockey TMPPRO3 \
+	             --noillumcorr --noskyflatcorr --noweightmap \
+	             --skymethod polynomial --skyorder 1 --nodivideexptime \
+	             --skyflatframes --tmpdirin --tmpdirout \
+	             $(XARGS)
 
 # ... combine temp processed images to make sky flat
 flats_makeskyflat:
-	python bokrmpipe.py $(INITARGS) \
-	                    -s skyflat \
-	                    --darkskyframes --tmpdirin --tmpdirout 
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s skyflat \
+	             $(SKYFLATARGS) --skyflatframes --tmpdirin --tmpdirout \
+	             $(XARGS)
 
 # all the steps to generate sky flats in one target
 flats: flats_illumcorr \
        flats_makefringe flats_fringeskycorr \
        flats_makeskyflat
 
+flats_nosky: makeillum flats_illumcorr flats_makefringe
+
 # Second-round processing: apply illumination, skyflat, and fringe corrections
 #  and do sky subtraction
 proc2:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s proc2 \
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s proc2 $(XARGS)
 
 # Perform individual processing steps as listed in STEPS
 steps:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) -s $(STEPS) $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s $(STEPS) $(XARGS)
 
 # Assuming cals already exist, perfrom all the processing steps on science ims
 procall:
-	python bokrmpipe.py $(INITARGS) $(PROCARGS) \
-	                    -s oscan,proc1,proc2 -t object \
-	                    $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) 
+	             -s oscan,proc1,proc2 -t object $(XARGS)
 
 
 # Obtain astrometric solutions
 wcs:
-	python bokrmpipe.py $(INITARGS) -s wcs --gaia $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s wcs --gaia $(XARGS)
 
 
 # Generate object catalogs and PSF models with sextractor+psfex
 catalogs:
-	python bokrmpipe.py $(INITARGS) -s cat $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) -s cat $(XARGS)
 
 
 # Generate aperture photometry catalogs for RM targets
 aperphot_rm:
-	python bokrmphot.py $(INITARGS) --aperphot $(XARGS)
+	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS)
 
 # Generate aperture photometry catalogs for SDSS reference stars
 aperphot_sdss:
-	python bokrmphot.py $(INITARGS) --aperphot $(XARGS) --catalog sdss
+	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS) --catalog sdss
 
 # Generate aperture photometry catalogs for CFHT reference stars
 aperphot_cfht:
-	python bokrmphot.py $(INITARGS) --aperphot $(XARGS) --catalog cfht
+	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS) --catalog cfht
 
 aperphot: aperphot_sdss aperphot_cfht aperphot_rm
 
 zeropoints_sdss:
-	python bokrmphot.py $(INITARGS) --zeropoint $(XARGS) --catalog sdss
+	$(BOKRMPHOT) $(INITARGS) --zeropoint $(XARGS) --catalog sdss
 
 # Generate lightcurve tables for RM targets
 lightcurves_rm:
-	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS)
+	$(BOKRMPHOT) $(INITARGS) --lightcurves $(XARGS)
 
 # Generate lightcurve tables for SDSS reference stars
 lightcurves_sdss:
-	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS) --catalog sdss
+	$(BOKRMPHOT) $(INITARGS) --lightcurves $(XARGS) --catalog sdss
 
 # Generate lightcurve tables for CFHT reference stars
 lightcurves_cfht:
-	python bokrmphot.py $(INITARGS) --lightcurves $(XARGS) --catalog cfht
+	$(BOKRMPHOT) $(INITARGS) --lightcurves $(XARGS) --catalog cfht
 
 all_sdssref: aperphot_sdss zeropoints_sdss lightcurves_sdss
 
@@ -177,17 +166,25 @@ metadata:
 redo:
 	make XARGS="-R $(XARGS)" procall wcs catalogs aperphot
 
+rebuild_caldb: makeillum flats_makefringe flats_makeskyflat
+
+compress:
+	$(BOKRMPIPE) $(DATAINITARGS) --compress $(XARGS)
+
+cleancals:
+	$(BOKRMPIPE) $(DATAINITARGS) --cleancals $(XARGS)
+
 #
 # Diagnostic stuff
 #
 
 # Make PNG images for inspection purposes
 images:
-	python bokrmpipe.py $(INITARGS) --images $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) --images $(XARGS)
 
 # Tabulate the rms of the astrometric solutions
 checkwcs:
-	python bokrmpipe.py $(INITARGS) --wcscheck $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) --wcscheck $(XARGS)
 
 # Check status of image processing
 checkproc:

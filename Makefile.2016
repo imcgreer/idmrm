@@ -7,7 +7,8 @@ ifndef UTDATE
 endif
 
 ifndef PROCARGS
-	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap
+	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap \
+	            --noskyflatcorr
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \

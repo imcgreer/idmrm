@@ -9,15 +9,11 @@ ifndef UTDATE
 endif
 
 ifndef PROCARGS
-	PROCARGS := --nousepixflat --rampcorr --noweightmap
+	PROCARGS := --nousepixflat --rampcorr --noweightmap --noskyflatcorr
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
             $(MPARGS) $(VERBOSE)
 
-run1:
-	make -f Makefile.2015 all UTDATE=201501
-
-run2:
-	make -f Makefile.2015 all UTDATE=201502
+SKYFLATARGS := --masterskyflat
 
