@@ -165,8 +165,10 @@ def all_gain_vals(diagdir,obsDb):
 	return vstack(tabs)
 
 def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,
-                   raw=False,pdfFile='bok_gain_vals.pdf'):
+                   raw=False,pdfFile=None):
 	from matplotlib.backends.backend_pdf import PdfPages
+	if pdfFile is None:
+		pdfFile = 'bok_gain_vals.pdf'
 	plt.ioff()
 	if gainDat is None:
 		gainDat = all_gain_vals(diagdir,obsDb)
@@ -182,21 +184,25 @@ def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,
 def calc_sky_backgrounds(dataMap,outputFile):
 	extns = ['IM4']
 	imstat = BokImStat(extensions=extns,quickprocess=True,
-	                   stats_region='amp_central_quadrant')
+	                   stats_region='amp_central_quadrant',stats_stride=8)
 	skyvals = []
-	for utd in dataMap.iterUtDates():
-		files,ii = dataMap.getFiles(imType='object',with_frames=True)
-		if files is not None:
-			rawfiles = [ dataMap('raw')(f) for f in files ]
-			imstat.process_files(rawfiles)
-			sky = imstat.meanVals[:,0]
-			print '%8s %4d %10.1f %10.1f %10.1f' % \
-			      (utd,len(files),sky.mean(),sky.min(),sky.max())
-			skyvals.extend([ (utd,f.split('/')[1],s) 
-			                    for f,s in zip(files,sky) ])
-		imstat.reset()
-	tab = Table(rows=skyvals,names=('utDate','fileName','skyMean'))
+	files,ii = dataMap.getFiles(imType='object',includebad=True,
+	                            with_frames=True)
+	rawfiles = map(dataMap('raw'),files)
+	imstat.process_files(rawfiles)
+	sky = imstat.meanVals[:,0].astype(np.float32)
+	tab = Table(dict(frameIndex=dataMap.obsDb['frameIndex'][ii],
+	                 utDate=dataMap.obsDb['utDate'][ii],
+	                 fileName=dataMap.obsDb['fileName'][ii],
+	                 filter=dataMap.obsDb['filter'][ii],
+	                 skyMean=sky))
 	tab.write(outputFile)
+	tab = tab.group_by(['utDate','filter'])
+	for k,g in zip(tab.groups.keys,tab.groups):
+		sky = g['skyMean']
+		print '%8s %3s %4d %10.1f %10.1f %10.1f' % \
+		      (k['utDate'],k['filter'],len(g),
+		       sky.mean(),sky.min(),sky.max())
 
 def id_sky_frames(obsDb,skytab,utds,thresh=10000.):
 	frametab = obsDb['frameIndex','utDate','fileName','objName'].copy()
@@ -741,6 +747,8 @@ if __name__=='__main__':
 	                help='use old (09/2014) processed images')
 	parser.add_argument('--objid',type=int,
 	                help='object number')
+	parser.add_argument('--outfile',type=str,
+	                help='output file')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -758,7 +766,8 @@ if __name__=='__main__':
 	if args.checkramp:
 		check_bias_ramp(dataMap)
 	if args.checkgains:
-		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb)
+		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb,
+		               pdfFile=args.outfile)
 	if args.cutouts:
 		photCat.load_bok_phot()
 		image_cutouts(dataMap,photCat,band=args.band,
