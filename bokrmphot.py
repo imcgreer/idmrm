@@ -641,7 +641,9 @@ def calibrate_lightcurves(photCat,dataMap,minNstar=70,
 	fluxErr = tab['countsErr'] * apCorr * fluxConv
 	tab['aperFlux'] = flux.filled(0)
 	tab['aperFluxErr'] = fluxErr.filled(0)
-	tab = join_by_frameid(tab,dataMap.obsDb['frameIndex','airmass','mjd'])
+	obsdat = dataMap.obsDb['frameIndex','airmass','mjdMid'].copy()
+	obsdat.rename_column('mjdMid','mjd')
+	tab = join_by_frameid(tab,obsdat)
 	print 'writing to ',photCat.bokPhotFn
 	tab.write(photCat.bokPhotFn,overwrite=True)
 	photCat.bokPhot = tab
