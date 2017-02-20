@@ -9,11 +9,13 @@ ifndef UTDATE
 endif
 
 ifndef PROCARGS
-	PROCARGS := --nousepixflat --rampcorr --noweightmap --noskyflatcorr
+	PROCARGS := --nousepixflat --rampcorr --noweightmap 
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
             $(MPARGS) $(VERBOSE)
 
-SKYFLATARGS := --masterskyflat
+# XXX switch fringe to "per-run"
+
+#SKYFLATARGS := --masterskyflat
 

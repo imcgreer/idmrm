@@ -162,20 +162,29 @@ def make_obs_db(args):
 		rmObsDbFile = os.path.join('config','sdssrm-bok2014.fits')
 		obsDb[isrm2014].write(rmObsDbFile,overwrite=True)
 
-def load_darksky_frames(season,filt):
-	tab = []
-	for b in filt:
-		t = Table.read(os.path.join('config',
-		                            'bokrm%s_darksky_%s.txt'%(season,b)),
-		               format='ascii')
-		tab.append(t)
-	t = vstack(tab)
-	ut = t['utDate']
-	del t['utDate']
-	t['utDate'] = ut.astype('S8')
-	return t
+def update_db_with_badsky(maxSkyCounts=40000):
+	from astropy.io import fits
+	rmObsDbFile = os.path.join('config','sdssrm-bok.fits.gz')
+	f = fits.open(rmObsDbFile,mode='update')
+	skyDat = Table.read(os.path.join('data','bokrm_skyadu.fits'))
+	ii = np.where(f[1].data['imType']=='object')[0]
+	m = join(Table(f[1].data[ii])['frameIndex',],skyDat,'frameIndex')
+	assert np.all(f[1].data['frameIndex'][ii]==m['frameIndex'])
+	f[1].data['good'][ii] &= m['skyMean'] < maxSkyCounts
+	f.flush()
+	f.close()
 
-class IllumFilter(object):
+
+def get_observing_season(dataMap):
+	year = np.unique([ utd[:4] for utd in dataMap.getUtDates() ])
+	if np.all(sorted(year) == ['2013','2014']):
+		year = ['2014']
+	elif len(year) > 1:
+		raise ValueError("Currently processing only one observing season "
+		                 "at a time is supported")
+	return year[0]
+
+class IllumSelector(object):
 	minNImg = 15
 	maxNImg = 30
 	skySigThresh = 3.0
@@ -215,6 +224,52 @@ class IllumFilter(object):
 			keep[jj[nimg>self.maxNImg]] = False
 		return keep
 
+class SkyFlatSelector2014(object):
+	def __init__(self):
+		skyfile = lambda b: os.path.join('config',
+		                                 'bokrm2014_darksky_%s.txt'%b)
+		skytab = vstack([Table.read(skyfile(b),format='ascii') 
+		                     for b in 'gi'])
+		self.darkSkyFrames = skytab['fileName']
+	def __call__(self,obsDb,ii):
+		return np.in1d(obsDb['fileName'][ii],self.darkSkyFrames)
+
+class GenericFlatSelector(object):
+	minNImg = 15
+	maxNImg = 100
+	maxCounts = 20000
+	def __init__(self):
+		self.skyDat = Table.read(os.path.join('data','bokrm_skyadu.fits'))
+	@staticmethod
+	def __check_same(obsDb,ii1,ii2):
+		return ( (obsDb['objName'][ii1] == obsDb['objName'][ii2]) &
+		         (obsDb['filter'][ii1] == obsDb['filter'][ii2]) &
+		         (obsDb['utDate'][ii1] == obsDb['utDate'][ii2]) )
+	def __call__(self,obsDb,ii):
+		keep = np.ones(len(ii),dtype=bool)
+		# repeated images at same pointing center
+		jj = np.arange(1,len(ii),2)
+		keep[jj] ^= self.__check_same(obsDb,ii[jj],ii[jj-1])
+		jj = np.arange(2,len(ii),2)
+		keep[jj] ^= self.__check_same(obsDb,ii[jj],ii[jj-1])
+		# pointings swamped with bright stars
+		for field in ['rm10','rm11','rm12','rm13']:
+			keep[obsDb['objName'][ii]==field] = False
+		print 'selected ',','.join(list(obsDb['fileName'][ii[keep]]))
+		return keep
+
+class SkyFlatSelector(GenericFlatSelector):
+	def __call__(self,obsDb,ii):
+		keep = super(SkyFlatSelector,self).__call__(obsDb,ii)
+		m = join(obsDb['frameIndex',][ii],self.skyDat,'frameIndex')
+		assert np.all(m['frameIndex']==obsDb['frameIndex'][ii])
+		keep &= m['skyMean'] < self.maxCounts
+		if keep.sum() > self.maxNImg:
+			jj = np.where(keep)[0]
+			jj = jj[m['skyMean'][jj].argsort()]
+			keep[jj[self.maxNImg:]] = False
+		return keep
+
 def config_rm_data(dataMap,args,season=None):
 	if args.band is None:
 		# set default for RM
@@ -235,8 +290,8 @@ if __name__=='__main__':
 	parser = argparse.ArgumentParser()
 	parser = bokpl.init_file_args(parser)
 	parser = bokpl.init_pipeline_args(parser)
-	parser.add_argument('--darkskyframes',action='store_true',
-	                help='load only the dark sky frames')
+	parser.add_argument('--skyflatframes',action='store_true',
+	                help='load only the sky flat frames')
 	parser.add_argument('--makeobsdb',action='store_true',
 	                help='make the observations database')
 	parser.add_argument('--gaia',action='store_true',
@@ -252,23 +307,26 @@ if __name__=='__main__':
 		make_obs_db(args)
 		sys.exit(0)
 	dataMap = bokpl.init_data_map(args)
+	season = get_observing_season(dataMap)
 	dataMap = config_rm_data(dataMap,args)
 	if args.gaia:
 		sdir = 'scamp_refs_gaia'
 	else:
 		sdir = 'scamp_refs'
 	dataMap.setScampRefCatDir(os.path.join(args.output,'..',sdir))
-	# XXX get rid of this and use a filter as for illum
-	if args.darkskyframes:
-		filt = args.band if args.band else dataMap.getFilters()
-		frames = load_darksky_frames('2014',filt)
-		dataMap.setFileList(frames['utDate'],frames['fileName'])
-	elif args.makebpmask:
+	if args.skyflatframes:
+		# XXX should use classmethod
+		if season=='2014':
+			dataMap.setFileFilter(SkyFlatSelector2014())
+		else:
+			dataMap.setFileFilter(SkyFlatSelector())
+	if args.makebpmask:
 		build_mask_from_flat(dataMap('cal')(args.makebpmask),
 		                     dataMap.getCalMap('badpix').getFileName(),
 		                     dataMap.getCalDir())
 	kwargs = {}
-	kwargs['illum_filter_fun'] = IllumFilter()
+	kwargs['illum_filter_fun'] = IllumSelector()
+#	kwargs['skyflat_selector'] = SkyFlatSelector(season)
 	kwargs['header_fixes'] = build_headerfix_dict()
 	bokpl.run_pipe(dataMap,args,**kwargs)
 

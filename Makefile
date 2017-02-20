@@ -32,7 +32,7 @@ endif
 
 DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) 
 
-INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
+INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE) 
 
 BOKRMPIPE := python bokrmpipe.py
 BOKRMPHOT := python bokrmphot.py
