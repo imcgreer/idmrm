@@ -37,7 +37,7 @@ INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 BOKRMPIPE := python bokrmpipe.py
 BOKRMPHOT := python bokrmphot.py
 
-all_detrend: initproc badpix proc1 makeillum flats proc2
+all_detrend: initproc badpix proc1 makeillum flats proc2 skysub
 
 obsdb:
 	$(BOKRMPIPE) --makeobsdb $(LOGARGS) $(DATAARGS) -R
@@ -70,7 +70,7 @@ makeillum:
 flats_illumcorr:
 	$(BOKRMPIPE) $(INITARGS) -s proc2 --prockey TMPPRO2 \
 	             --nofringecorr --noskyflatcorr \
-	             --noskysub --noweightmap --nodivideexptime \
+	             --noweightmap --nodivideexptime \
 	             --skyflatframes --tmpdirout \
 	             $(XARGS)
 
@@ -81,12 +81,21 @@ flats_makefringe:
 	             $(XARGS)
 
 # ... apply fringe correction to sky flat images
-flats_fringeskycorr:
+flats_fringecorr:
 	$(BOKRMPIPE) $(INITARGS) \
 	             -s proc2 --prockey TMPPRO3 \
-	             --noillumcorr --noskyflatcorr --noweightmap \
-	             --skymethod polynomial --skyorder 1 --nodivideexptime \
+	             --noillumcorr --noskyflatcorr \
+	             --noweightmap --nodivideexptime \
 	             --skyflatframes --tmpdirin --tmpdirout \
+	             $(XARGS)
+
+# ... apply sky subtraction to sky flat images
+flats_skysub:
+	$(BOKRMPIPE) $(INITARGS) \
+	             -s skysub \
+	             --skymethod polynomial --skyorder 1 \
+	             --skyflatframes --tmpdirin --tmpdirout \
+                 --flatcorrectbeforeskymask \
 	             $(XARGS)
 
 # ... combine temp processed images to make sky flat
@@ -97,7 +106,7 @@ flats_makeskyflat:
 
 # all the steps to generate sky flats in one target
 flats: flats_illumcorr \
-       flats_makefringe flats_fringeskycorr \
+       flats_makefringe flats_fringecorr flats_skysub \
        flats_makeskyflat
 
 flats_nosky: makeillum flats_illumcorr flats_makefringe
@@ -105,7 +114,7 @@ flats_nosky: makeillum flats_illumcorr flats_makefringe
 # Second-round processing: apply illumination, skyflat, and fringe corrections
 #  and do sky subtraction
 proc2:
-	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s proc2 $(XARGS)
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) -s proc2,skysub $(XARGS)
 
 # Perform individual processing steps as listed in STEPS
 steps:
@@ -114,7 +123,7 @@ steps:
 # Assuming cals already exist, perfrom all the processing steps on science ims
 procall:
 	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) 
-	             -s oscan,proc1,proc2 -t object $(XARGS)
+	             -s oscan,proc1,proc2,skysub -t object $(XARGS)
 
 
 # Obtain astrometric solutions
