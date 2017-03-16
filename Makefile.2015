@@ -17,7 +17,7 @@ INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
 
 # XXX switch fringe to "per-run"
 
-SKYFLATARGS := --masterskyflat
+export SKYFLATARGS := --masterskyflat
 
 run1flats:
 	make -f Makefile flats UTDATE=201501
