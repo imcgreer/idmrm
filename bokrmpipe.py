@@ -19,7 +19,23 @@ def set_rm_defaults(args,version=pipeVersion):
 		args.obsdb = os.path.join('config','sdssrm-bok.fits.gz')
 	return args
 
+def load_field_centers():
+	from astropy.coordinates import SkyCoord
+	fieldcenters = {}
+	with open('observe/bokrm_g_300s.txt') as pfile:
+		for l in pfile:
+			d = l.strip().split()
+			f = d[3].strip("'")
+			ra = d[6]
+			ra = ra[:2]+'h'+ra[2:4]+'m'+ra[4:]+'s'
+			dec = d[7]
+			dec = dec[:3]+'d'+dec[3:5]+'m'+dec[6:]+'s'
+			c = SkyCoord(ra+' '+dec)
+			fieldcenters[f] = (c.ra.value,c.dec.value)
+	return fieldcenters
+
 def build_headerfix_dict():
+	fc = load_field_centers()
 	hdrfix = {}
 	# missing filter
 	for fn in [ 'ut20140314/bokrm.20140314.%04d' % 
@@ -31,6 +47,9 @@ def build_headerfix_dict():
 		hdrfix[fn] = [ (0,{'FILTER':'g'}) ]
 	for fn in [ 'ut20140609/bokrm.20140609.%04d' % _i for _i in [178] ]:
 		hdrfix[fn] = [ (0,{'FILTER':'g'}) ]
+	# wrong field name
+	for fn in [ 'ut20150306/bokrm.20150306.%04d' % _i for _i in [43] ]:
+		hdrfix[fn] = [ (0,{'OBJECT':'rm12'}) ]
 	# bad coordinates
 	fn = 'ut20140128/bokrm.20140128.0094'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.08325}) for j in range(1,17) ]
@@ -54,14 +73,133 @@ def build_headerfix_dict():
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':213.70442}) for j in range(1,17) ]
 	fn = 'ut20140518/bokrm.20140518.0130'
 	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL2':215.09221}) for j in range(1,17) ]
+	fn = 'ut20150110/d7032.0190'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':52.956,'CRVAL2':212.238}) 
+	                   for j in range(1,17) ]
+	fn = 'ut20150110/d7032.0191'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':52.956,'CRVAL2':212.238}) 
+	                   for j in range(1,17) ]
+	fn = 'ut20150110/d7032.0199'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.078}) for j in range(1,17) ]
+	fn = 'ut20150209/d7062.0115'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':52.23816,'CRVAL2':211.98905}) 
+	                   for j in range(1,17) ]
+	fn = 'ut20150505/d7148.0107'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.07775,'CRVAL2':212.122625}) 
+	                   for j in range(1,17) ]
+	# the following are here for reference -- the pointing was totally off
+	# and so these fields are useless. but got the coords from astrometry.net
+	# so saving them here.
+	# XX should insert a primary hdu OBJECT=unknown so astrom doesnt use refcat
+	fn = 'ut20150505/d7148.0108'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.89656,'CRVAL2':209.18793}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150505/d7148.0109'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.89656,'CRVAL2':209.18893}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150505/d7148.0110'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.76956,'CRVAL2':209.24527}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150505/d7148.0111'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.76956,'CRVAL2':209.24527}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150505/d7148.0112'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.75356,'CRVAL2':209.32710}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150505/d7148.0113'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.75356,'CRVAL2':209.32710}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0035' # has nice ngc galaxies
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.74856,'CRVAL2':212.10304}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0036'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.74856,'CRVAL2':212.10304}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0037'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.73356,'CRVAL2':212.18788}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0038'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.73356,'CRVAL2':212.18788}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0039' # this seems to have some overlap, keep
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.99256,'CRVAL2':213.7449}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0040' # this seems to have some overlap, keep
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.99256,'CRVAL2':213.7449}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0041' # way out again
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':55.82556,'CRVAL2':215.13028}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0042' 
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':55.82556,'CRVAL2':215.13028}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0049' 
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':fc['rm07'][1],'CRVAL2':fc['rm07'][0]}) 
+	                   for j in range(1,17) ]
+	for fn in [ 'ut20150506/d7149.%04d'  % _i for _i in [50,51] ]:
+		hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':fc['rm08'][1],
+		                          'CRVAL2':fc['rm08'][0]+4./60/.59}) 
+		                   for j in range(1,17) ]
+	for fn in [ 'ut20150506/d7149.%04d'  % _i for _i in [52,53] ]:
+		hdrfix[fn] = [ (0,{'OBJECT':'rm10'}) ]
+		hdrfix[fn] += [ ('IM%d'%j,{'CRVAL1':fc['rm10'][1],
+		                           'CRVAL2':fc['rm10'][0]+4./60/.59}) 
+		                   for j in range(1,17) ]
+	for fn in [ 'ut20150506/d7149.%04d'  % _i for _i in [54,55] ]:
+		hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':51.16356,'CRVAL2':213.74266})
+		                   for j in range(1,17) ]
+		hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	for fn in [ 'ut20150506/d7149.%04d'  % _i for _i in [56,57] ]:
+		hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':50.20356,'CRVAL2':213.74238})
+		                   for j in range(1,17) ]
+		hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20150506/d7149.0069' 
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':fc['rm13'][1]+1/60.,
+	                          'CRVAL2':fc['rm13'][0]-3.5/60/.59}) 
+	                  for j in range(1,17) ]
+	for fn in [ 'ut20150506/d7149.%04d'  % _i for _i in [70,71] ]:
+		hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':fc['rm14'][1]+0.5/60,
+		                          'CRVAL2':fc['rm14'][0]-2./60/.59}) 
+		                  for j in range(1,17) ]
+	fn = 'ut20150506/d7149.0072'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.91756,'CRVAL2':215.59415}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20160501/d7509.0141'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':53.30456,'CRVAL2':214.79687}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20160501/d7509.0142'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.11256,'CRVAL2':214.59420}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
+	fn = 'ut20160501/d7509.0143'
+	hdrfix[fn] = [ ('IM%d'%j,{'CRVAL1':54.12256,'CRVAL2':214.61930-4./60/.59}) 
+	                   for j in range(1,17) ]
+	hdrfix[fn].insert(0,(0,{'OBJECT':'rm_unknown'}))
 	return hdrfix
 
 def make_obs_db(args):
-	# all Bok observations during RM nights (incl. IBRM)
+	# first generate observations log for all Bok observations during RM 
+	# nights (incl. IBRM or other ancillary data)
 	fullObsDbFile = os.path.join(os.environ['BOK90PRIMERAWDIR'],
 	                             'sdssrm-allbok.fits')
 	if not os.path.exists(fullObsDbFile) or args.redo:
-		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201?????')))
+		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201[3-6]????')))
 		print utDirs
 		try:
 			obsDb = Table.read(fullObsDbFile)
@@ -69,85 +207,112 @@ def make_obs_db(args):
 		except IOError:
 			obsDb = None
 		bokobsdb.generate_log(utDirs,fullObsDbFile,inTable=obsDb)
-		obsDb = Table.read(fullObsDbFile)
-		# fix problems
-		# 1. files that are missing FILTER values
-		missing = [ 'bokrm.20140314.%04d' % _i for _i in range(173,180) ]
-		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
-		missing = [ 'bokrm.20140317.%04d' % _i for _i in [147,153] ]
-		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'i'
-		missing = [ 'bokrm.20140318.%04d' % _i for _i in [113] ]
-		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
-		missing = [ 'bokrm.20140609.%04d' % _i for _i in [178] ]
-		obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
-		# 2. flag bad images
-		good = np.ones(len(obsDb),dtype=bool)
-		#       #184 telescope was moving
-		bad = [ 'd6649.%04d' % _i for _i in [184] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #1 flat has weird stripes
-		bad = [ 'a%04d' % _i for _i in [1] ]
-		good[(obsDb['utDate']=='20140114') &
-		     np.in1d(obsDb['fileName'],bad)] = False
-		#       first survey image was 300s and way overexposed
-		bad = [ 'bokrm.20140114.%04d' % _i for _i in [1] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       trailed image
-		bad = [ 'bok.20140115.%04d' % _i for _i in [3] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       trailed image
-		bad = [ 'bokrm.20140118.%04d' % _i for _i in [130] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       trailed image
-		bad = [ 'bokrm.20140123.%04d' % _i for _i in [201] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       telescope was moving
-		bad = [ 'bokrm.20140129.%04d' % _i for _i in [123] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       telescope was moving
-		bad = [ 'bokrm.20140215.%04d' % _i for _i in [140] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       lots of passing clouds with saturated ims this night
-		#       #124 - telescope was moving
-		bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,124,144,145,146,147,
-		                                              150,152,153,158] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #173 telescope was moving
-		bad = [ 'bokrm.20140312.%04d' % _i for _i in [173] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       lots of passing clouds with saturated ims this night
-		bad = [ 'bokrm.20140313.%04d' % _i for _i in [119,121,122] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #26 flat is truncated, passing clouds
-		bad = [ 'bokrm.20140319.%04d' % _i for _i in [26,51,52,53,54,55,
-		                                              56,57,58,59,60] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       trailed image
-		bad = [ 'bokrm.20140514.%04d' % _i for _i in [104,116] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       double image, telescope jumped
-		bad = [ 'bokrm.20140518.%04d' % _i for _i in [114] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #181 telescope was moving
-		bad = [ 'bokrm.20140609.%04d' % _i for _i in [181] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       #116,171 telescope was moving
-		bad = [ 'bokrm.20140610.%04d' % _i for _i in [116,171] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       lots of passing clouds with saturated ims this night
-		bad = [ 'bokrm.20140612.%04d' % _i for _i in [88,89,90,102,103,104,
-		                                              105,107,110,111,112,
-		                                              113,114,115,119,120,
-		                                              121,122,123] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		#       bad read, looks like aborted exposure
-		bad = [ 'd7467.%04d' % _i for _i in [101] ]
-		good[np.in1d(obsDb['fileName'],bad)] = False
-		# write the edited table
-		obsDb['good'] = good
-		obsDb.write(fullObsDbFile,overwrite=True)
+	# then read in the auto-generated table and then fix problems
 	obsDb = Table.read(fullObsDbFile)
-	# all RM observations
+	# 1. files that are missing FILTER values
+	missing = [ 'bokrm.20140314.%04d' % _i for _i in range(173,180) ]
+	obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
+	missing = [ 'bokrm.20140317.%04d' % _i for _i in [147,153] ]
+	obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'i'
+	missing = [ 'bokrm.20140318.%04d' % _i for _i in [113] ]
+	obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
+	missing = [ 'bokrm.20140609.%04d' % _i for _i in [178] ]
+	obsDb['filter'][np.in1d(obsDb['fileName'],missing)] = 'g'
+	# 2. files with bad pointing that are way off from target field
+	badpoint = [ 'd7148.%04d' % _i for _i in range(108,123) ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm_unknown'
+	badpoint = [ 'd7149.%04d' % _i for _i in range(35,42+1) ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm_unknown'
+	#        ....or skipped to next pointing for some reason
+	badpoint = [ 'd7149.%04d' % _i for _i in range(52,53+1) ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm10'
+	badpoint = [ 'd7149.%04d' % _i for _i in range(54,57+1) ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm_unknown'
+	badpoint = [ 'd7149.%04d' % _i for _i in [72] ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm_unknown'
+	badpoint = [ 'd7509.%04d' % _i for _i in range(141,143+1) ]
+	obsDb['objName'][np.in1d(obsDb['fileName'],badpoint)] = 'rm_unknown'
+	# 3. flag bad images
+	good = np.ones(len(obsDb),dtype=bool)
+	#       test images with short exposure times
+	good[(obsDb['imType']=='object')&(obsDb['expTime']<30)] = False
+	#       #184 telescope was moving
+	bad = [ 'd6649.%04d' % _i for _i in [184] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       #1 flat has weird stripes
+	bad = [ 'a%04d' % _i for _i in [1] ]
+	good[(obsDb['utDate']=='20140114') &
+	     np.in1d(obsDb['fileName'],bad)] = False
+	#       first survey image was 300s and way overexposed
+	bad = [ 'bokrm.20140114.%04d' % _i for _i in [1] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       trailed image
+	bad = [ 'bok.20140115.%04d' % _i for _i in [3] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       trailed image
+	bad = [ 'bokrm.20140118.%04d' % _i for _i in [130] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       trailed image
+	bad = [ 'bokrm.20140123.%04d' % _i for _i in [201] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       telescope was moving
+	bad = [ 'bokrm.20140129.%04d' % _i for _i in [123] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       telescope was moving
+	bad = [ 'bokrm.20140215.%04d' % _i for _i in [140] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       lots of passing clouds with saturated ims this night
+	#       #124 - telescope was moving
+	bad = [ 'bokrm.20140219.%04d' % _i for _i in [93,124,144,145,146,147,
+	                                              150,152,153,158] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       #173 telescope was moving
+	bad = [ 'bokrm.20140312.%04d' % _i for _i in [173] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       lots of passing clouds with saturated ims this night
+	bad = [ 'bokrm.20140313.%04d' % _i for _i in [119,121,122] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       #26 flat is truncated, passing clouds
+	bad = [ 'bokrm.20140319.%04d' % _i for _i in [26,51,52,53,54,55,
+	                                              56,57,58,59,60] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       trailed image
+	bad = [ 'bokrm.20140514.%04d' % _i for _i in [104,116] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       double image, telescope jumped
+	bad = [ 'bokrm.20140518.%04d' % _i for _i in [114] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       #181 telescope was moving
+	bad = [ 'bokrm.20140609.%04d' % _i for _i in [181] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       #116,171 telescope was moving
+	bad = [ 'bokrm.20140610.%04d' % _i for _i in [116,171] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       lots of passing clouds with saturated ims this night
+	bad = [ 'bokrm.20140612.%04d' % _i for _i in [88,89,90,102,103,104,
+	                                              105,107,110,111,112,
+	                                              113,114,115,119,120,
+	                                              121,122,123] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       double image, telescope jumped
+	bad = [ 'd7062.%04d' % _i for _i in [137] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       trailed image
+	bad = [ 'bokrm.20150307.%04d' % _i for _i in [9] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       passing clouds so images near saturation, bad gradients
+	bad = [ 'bokrm.20150405.%04d' % _i for _i in [15,16,17,18,19,54,55] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       bad pointings, then trailed image (115); then bad sky (>=116)
+	bad = [ 'd7148.%04d' % _i for _i in [#108,109,110,111,112,113,
+	                                     115,118,119,120,121,122] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	#       bad read, looks like aborted exposure
+	bad = [ 'd7467.%04d' % _i for _i in [101] ]
+	good[np.in1d(obsDb['fileName'],bad)] = False
+	# write the edited table
+	obsDb['good'] = good
+	# and now restrict to only RM observations
 	iszero = obsDb['imType']=='zero'
 	isflat = ( (obsDb['imType']=='flat') & 
 	           ((obsDb['filter']=='g')|(obsDb['filter']=='i')) )
@@ -156,23 +321,23 @@ def make_obs_db(args):
 	isrm = iszero | isflat | isrmfield
 	rmObsDbFile = os.path.join('config','sdssrm-bok.fits')
 	obsDb[isrm].write(rmObsDbFile,overwrite=True)
-	if False:
-		# all RM observations in 2014
-		isrm2014 = isrm & (obsDb['mjd']<57000)
-		rmObsDbFile = os.path.join('config','sdssrm-bok2014.fits')
-		obsDb[isrm2014].write(rmObsDbFile,overwrite=True)
+	if True:
+		update_db_with_badsky()
 
 def update_db_with_badsky(maxSkyCounts=40000):
 	from astropy.io import fits
-	rmObsDbFile = os.path.join('config','sdssrm-bok.fits.gz')
+	rmObsDbFile = os.path.join('config','sdssrm-bok.fits')
 	f = fits.open(rmObsDbFile,mode='update')
 	skyDat = Table.read(os.path.join('data','bokrm_skyadu.fits'))
 	ii = np.where(f[1].data['imType']=='object')[0]
 	m = join(Table(f[1].data[ii])['frameIndex',],skyDat,'frameIndex')
 	assert np.all(f[1].data['frameIndex'][ii]==m['frameIndex'])
-	f[1].data['good'][ii] &= m['skyMean'] < maxSkyCounts
+	good = m['skyMean'] < maxSkyCounts
+	f[1].data['good'][ii] &= good
 	f.flush()
 	f.close()
+	m['frameIndex','utDate','fileName','filter','skyMean'][~good].write(
+	     'data/badskylist.txt',format='ascii',overwrite=True)
 
 
 def get_observing_season(dataMap):
@@ -320,6 +485,7 @@ if __name__=='__main__':
 			dataMap.setFileFilter(SkyFlatSelector2014())
 		else:
 			dataMap.setFileFilter(SkyFlatSelector())
+		dataMap.groupByUtdFilt = True
 	if args.makebpmask:
 		build_mask_from_flat(dataMap('cal')(args.makebpmask),
 		                     dataMap.getCalMap('badpix').getFileName(),

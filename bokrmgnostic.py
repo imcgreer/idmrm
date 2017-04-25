@@ -197,12 +197,14 @@ def calc_sky_backgrounds(dataMap,outputFile):
 	                 filter=dataMap.obsDb['filter'][ii],
 	                 skyMean=sky))
 	tab.write(outputFile)
+	logf = open('data/bokrm_skysum.txt','w')
+	tab = Table.read(outputFile)
 	tab = tab.group_by(['utDate','filter'])
 	for k,g in zip(tab.groups.keys,tab.groups):
 		sky = g['skyMean']
-		print '%8s %3s %4d %10.1f %10.1f %10.1f' % \
-		      (k['utDate'],k['filter'],len(g),
-		       sky.mean(),sky.min(),sky.max())
+		logf.write('%8s %3s %4d %10.1f %10.1f %10.1f\n' % \
+		           (k['utDate'],k['filter'],len(g),
+		            sky.mean(),sky.min(),sky.max()))
 
 def id_sky_frames(obsDb,skytab,utds,thresh=10000.):
 	frametab = obsDb['frameIndex','utDate','fileName','objName'].copy()

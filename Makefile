@@ -40,7 +40,8 @@ BOKRMPHOT := python bokrmphot.py
 all_detrend: initproc badpix proc1 makeillum flats proc2 skysub
 
 obsdb:
-	$(BOKRMPIPE) --makeobsdb $(LOGARGS) $(DATAARGS) -R
+	$(BOKRMPIPE) --makeobsdb $(LOGARGS) -R \
+	             -r $(HOME)/data/observing/Bok/90Prime/RM
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:
@@ -122,7 +123,7 @@ steps:
 
 # Assuming cals already exist, perfrom all the processing steps on science ims
 procall:
-	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) 
+	$(BOKRMPIPE) $(INITARGS) $(PROCARGS) \
 	             -s oscan,proc1,proc2,skysub -t object $(XARGS)
 
 

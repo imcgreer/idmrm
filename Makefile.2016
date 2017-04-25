@@ -7,10 +7,11 @@ ifndef UTDATE
 endif
 
 ifndef PROCARGS
-	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap \
-	            --noskyflatcorr
+	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap
 endif
 
 INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
             $(MPARGS) $(VERBOSE)
+
+export SKYFLATARGS := --masterskyflat
 
