@@ -19,27 +19,8 @@ INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
 
 export SKYFLATARGS := --masterskyflat
 
-run1flats:
-	make -f Makefile flats UTDATE=201501
-
-run2flats:
-	make -f Makefile flats UTDATE=201502
-
-run3flats:
-	make -f Makefile flats UTDATE=201503
-
-run4flats:
-	make -f Makefile flats UTDATE=201504
-
-run5flats:
-	make -f Makefile flats UTDATE=2015050
-
-run6flats:
-	make -f Makefile flats UTDATE=2015052
-
-run7flats:
-	make -f Makefile flats UTDATE=201507
-
-allflats: run1flats run2flats run3flats run4flats \
-          run5flats run6flats run7flats
+flats15:
+	for utd in 201501 201502 201503 201504 2015050 2015052 201507; do \
+		make -f Makefile flats UTDATE=$$utd; \
+	done
 
