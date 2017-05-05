@@ -3,7 +3,7 @@ Bok 90Prime data for the SDSS-RM project
 
 ### Examples of using Makefiles to run processing steps
 
-First have to build the log of observations:
+First build a log of observations:
 
 `make -f Makefile.2014 obsdb`
 
@@ -35,22 +35,27 @@ Redo just one file:
 
 `make -f Makefile.2014 procall XARGS="-R -f bokrm.20140425.0121" NPROC=1`
 
-Post-processing steps: astrometric solutions, sextractor and aperture photometry catalogs:
+Post-processing steps: astrometric solutions, sextractor catalogs, and PSF models:
 
-`make -f Makefile.2014 wcs catalogs aperphot_sdss aperphot_rm`
+`make -f Makefile.2014 wcs catalogs`
 
-Determine SDSS zeropoints and generate lightcurves for SDSS reference stars:
+Generate aperture photometry catalogs and lightcurves for SDSS reference stars,
+calculate zeropoints from the aperture photometry:
 
-`make -f Makefile.2014 zeropoints_sdss lightcurves_sdss lightcurves_rm`
+`make aperphot_sdss zeropoints_sdss lightcurves_sdss`
 
-Generate the meta-data table (zeropoints and other metrics for each image)
+Catalogs and lightcurves for the RM targets:
 
-`make -f Makefile.2014 metadata`
+`make aperphot_rm lightcurves_rm`
+
+Generate the meta-data table (collates the zeropoints and derives other metrics for each image):
+
+`make metadata`
 
 Generate PNG images for inspection:
 
-`make -f Makefile.2014 images`
+`make images`
 
 Check the processing status of each science image (produces HTML table):
 
-`make -f Makefile.2014 checkproc`
+`make checkproc`
