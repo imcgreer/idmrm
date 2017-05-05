@@ -78,7 +78,7 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 		lc = lcTab.groups[jj]
 	else:
 		raise ValueError
-	for band,lc,clr in zip(lc.groups.keys['filter'],lc.groups,['g','r']):
+	for band,lc,clr in zip(lc.groups.keys['filter'],lc.groups,['C2','C1']):
 		ax = plt.subplot(2,1,pnum,sharex=ax)
 		jj = np.where(lc['aperMag'][:,aperNum] < 30)[0]
 		if len(jj)==0:
@@ -87,7 +87,7 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 		plt.errorbar(lc['mjd'][jj],
 		             lc['aperMag'][jj,aperNum],
 		             lc['aperMagErr'][jj,aperNum],
-		             fmt='s',mfc='none',ecolor=clr,ms=2)
+		             fmt='s',mec=clr,mfc='none',ms=3,capsize=3,ecolor=clr)
 		if True:
 			dump_lc(lc,jj,aperNum)
 		kk = np.where(lc['flags'][:,aperNum] > 0)[0]
@@ -102,13 +102,13 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 			             _lc['aperMag'][:,aperNum],
 			             _lc['aperMagErr'][:,aperNum],
 			             fmt='s',mfc='none',mew=2,ecolor=clr,ms=8)
-		ymin = np.percentile(lc['aperMag'][jj,aperNum],10)
-		ymax = np.percentile(lc['aperMag'][jj,aperNum],90)
+		ymin = np.percentile(lc['aperMag'][jj,aperNum],5)
+		ymax = np.percentile(lc['aperMag'][jj,aperNum],95)
 		dy = max(0.05,5*np.median(lc['aperMagErr'][jj,aperNum]))
-		plt.ylim(ymin-dy,ymax+dy)
+		plt.ylim(ymax+dy,ymin-dy)
 		bi = 1 if clr=='g' else 3
 		if band=='g':
-			plt.title('object %d' % (targetNum))
+			plt.title('%s-%d' % (targetSource,targetNum))
 		if False:#targetSource=='RM':
 			plt.axhline(target['PSFMAG'][targetNum,bi],color=clr)
 			plt.scatter(target['DR_MJD'][targetNum],
@@ -119,6 +119,8 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 				          (targetNum,target['ZFINAL'][targetNum]))
 		if refCat is not None:
 			plt.axhline(refCat[band][_j],c='gray')
+		ax.xaxis.set_minor_locator(ticker.MultipleLocator(20))
+		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
 		pnum += 1
 	plt.xlim(min(lc['mjd'].min(),np.inf)-5,max(lc['mjd'].max(),0)+5)
 

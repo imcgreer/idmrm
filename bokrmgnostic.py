@@ -13,7 +13,8 @@ from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
 
 from bokpipe import bokphot,bokpl,bokgnostic
-from bokpipe.bokproc import ampOrder,BokImStat
+from bokpipe.bokproc import ampOrder#,BokImStat
+from bokpipe.bokutil import BokImStat ###
 import bokrmpipe
 import bokrmphot
 
@@ -265,6 +266,9 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		              (refCat['dec']>decs[1])&(refCat['dec']<decs[2]) &
 		              True)[0]
 		              #(refCat[band]<mlim))[0]
+		if len(ii) < 10:
+			rv.append(None)
+			continue
 		m1,m2,sep = bokrmphot.srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
 		                            refCat['ra'][ii],refCat['dec'][ii],5.0)
 		rv.append(dict(N=len(ii),nMatch=len(ii),

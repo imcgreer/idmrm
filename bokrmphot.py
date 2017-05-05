@@ -15,6 +15,7 @@ import bokrmpipe
 # Nominal limits to classify night as "photometric"
 zp_phot_nominal = {'g':25.90,'i':25.40}
 
+bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
 
 ##############################################################################
@@ -292,6 +293,9 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 		except InconsistentAxisTypesError:
 			print 'WCS FAILED!!! ',f
 			continue
+		except:
+			print 'aper_phot_image FAILED!!! ',f
+			continue
 		if phot is None:
 			print 'no apertures found!!!! ',f
 			continue
@@ -303,7 +307,7 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 def aperture_phot(dataMap,photCat,procmap,inputType='sky',**kwargs):
 	kwargs.setdefault('mask_is_weight_map',False)
 	kwargs.setdefault('background','global')
-	aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
+	aperRad = bokrm_aperRad
 	catDir = os.path.join(dataMap.procDir,'catalogs')
 	if not os.path.exists(catDir):
 		os.mkdir(catDir)
@@ -463,8 +467,12 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	bokutil.mplog('calculating zero points for %s [%d images]' % 
 	               (utd,len(files)))
 	sdss2bok = Sdss2BokTransform(filt)
-	aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
-	nAper = aperCat['counts'].shape[-1]
+	try:
+		aperCat = fits.getdata(os.path.join(aperCatDir,aperCatFn))
+	except IOError:
+		print 'WARNING: ',aperCatFn,' not found'
+		files = []
+	nAper = len(bokrm_aperRad) #aperCat['counts'].shape[-1]
 	aperCorrs = np.zeros((len(frames),nAper,4),dtype=np.float32)
 	aperZps = np.zeros((len(frames),4),dtype=np.float32)
 	aperZpRms = np.zeros((len(frames),4),dtype=np.float32)
@@ -491,6 +499,8 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 				aperMags = -2.5*np.ma.log10(counts)
 				snr = counts / aperCat['countsErr'][ii[c],aperNum]
 				aperMags[snr<15] = np.ma.masked
+				nstar = np.sum(~aperMags.mask)
+			if nstar > 20:
 				jj = aperCat['objId'][ii[c]]
 				refMags = sdss[filt][jj]
 				if applyColorCorrection:
