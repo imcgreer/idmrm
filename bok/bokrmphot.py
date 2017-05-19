@@ -194,7 +194,7 @@ class CleanSdssStarCatalog(SdssStarCatalog):
 		print 'removed ',len(m1),' quasars from star catalog ',len(refCat)
 		# remove objects with bad photometry; bad list comes 
 		# from find_outliers
-		f = os.path.join('.','sdssPhotSummary.fits')
+		f = os.path.join(self.bokRmDataDir,'sdssPhotSummary.fits')
 		objSum = Table.read(f)
 		for b in 'gi':
 			refCat[b+'_orig'] = refCat[b].copy()

@@ -40,8 +40,8 @@ BOKRMPHOT := python bokrmphot.py
 all_detrend: initproc badpix proc1 makeillum flats proc2 skysub
 
 obsdb:
-	$(BOKRMPIPE) --makeobsdb $(LOGARGS) -R \
-	             -r $(HOME)/data/observing/Bok/90Prime/RM
+	$(BOKRMPIPE) --makeobsdb $(LOGARGS) \
+	             -r $(HOME)/data/observing/Bok/90Prime/RM $(XARGS)
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:
