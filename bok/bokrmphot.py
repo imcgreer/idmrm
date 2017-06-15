@@ -257,6 +257,7 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
                 inp,**kwargs):
 	utd,filt = inp
 	redo = kwargs.pop('redo',False)
+	nowrite = kwargs.pop('nowrite',False)
 	fn = '.'.join([catPfx+'_aper',utd,filt,'cat','fits'])
 	catFile = os.path.join(catDir,fn)
 	if os.path.exists(catFile) and not redo:
@@ -302,7 +303,8 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 		phot['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
 		allPhot.append(phot)
 	allPhot = vstack(allPhot)
-	allPhot.write(catFile,overwrite=True)
+	if not nowrite:
+		allPhot.write(catFile,overwrite=True)
 
 def aperture_phot(dataMap,photCat,procmap,inputType='sky',**kwargs):
 	kwargs.setdefault('mask_is_weight_map',False)
@@ -962,6 +964,8 @@ if __name__=='__main__':
 	                help='zeropoints table')
 	parser.add_argument('--catdir',type=str,
 	                help='directory containing photometry catalogs')
+	parser.add_argument('--nowrite',action='store_true',
+	                help='skip writing output files')
 #	parser.add_argument('--outfile',type=str,
 #	                help='output file')
 	args = parser.parse_args()
@@ -978,7 +982,7 @@ if __name__=='__main__':
 	timerLog = bokutil.TimerLog()
 	if args.aperphot:
 		aperture_phot(dataMap,photCat,procmap,redo=args.redo,
-		              background=args.background)
+		              background=args.background,nowrite=args.nowrite)
 		timerLog('aper phot')
 	elif args.lightcurves:
 		photCat.load_bok_phot(nogroup=True)
