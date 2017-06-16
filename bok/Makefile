@@ -171,6 +171,12 @@ all_sdssref: aperphot_sdss zeropoints_sdss lightcurves_sdss
 metadata:
 	python bokrmgnostic.py $(LOGARGS) $(UTARGS) $(BANDARGS) --metadata $(XARGS)
 
+aggregate_sdss:
+	$(BOKRMPHOT) $(INITARGS) --aggregate $(XARGS) --catalog sdss
+
+update_metadata:
+	$(BOKRMPHOT) $(INITARGS) --updatemeta $(XARGS) --catalog sdss
+
 
 # Redo all processing, WCS, and catalogs from scratch
 redo:

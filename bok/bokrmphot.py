@@ -624,7 +624,7 @@ def stack_catalogs(dataMap,photCat,old=False):
 	tab.sort(['objId','frameIndex'])
 	return tab
 
-def calibrate_lightcurves(photCat,dataMap,minNstar=70,
+def calibrate_lightcurves(photCat,dataMap,minNstar=30,
                           zpFile='bokrm_zeropoints.fits',old=False):
 	if photCat.bokPhot is None:
 		tab = stack_catalogs(dataMap,photCat,old=old)
@@ -944,14 +944,16 @@ if __name__=='__main__':
 	                help='generate aperture photometry catalogs')
 	parser.add_argument('--background',type=str,default='global',
 	                help='background method to use for aperture phot ([global]|local|none)')
+	parser.add_argument('--zeropoint',action='store_true',
+	                help='do zero point calculation')
 	parser.add_argument('--lightcurves',action='store_true',
 	                help='construct lightcurves')
 	parser.add_argument('--aggregate',action='store_true',
 	                help='construct aggregate photometry')
+	parser.add_argument('--updatemeta',action='store_true',
+	                help='update metadata table with outlier stats')
 	parser.add_argument('--nightly',action='store_true',
 	                help='construct nightly lightcurves')
-	parser.add_argument('--zeropoint',action='store_true',
-	                help='do zero point calculation')
 	parser.add_argument('-p','--processes',type=int,default=1,
 	                help='number of processes to use [default=single]')
 	parser.add_argument('--old',action='store_true',
@@ -984,20 +986,27 @@ if __name__=='__main__':
 		aperture_phot(dataMap,photCat,procmap,redo=args.redo,
 		              background=args.background,nowrite=args.nowrite)
 		timerLog('aper phot')
-	elif args.lightcurves:
+	if args.zeropoint:
+		zero_points(dataMap,procmap,photCat)
+		timerLog('zeropoints')
+	if args.lightcurves:
 		photCat.load_bok_phot(nogroup=True)
 		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,old=args.old)
 		timerLog('lightcurves')
-	elif args.aggregate:
+	if args.aggregate:
 		photCat.load_bok_phot(nogroup=True)
 		which = 'nightly' if args.nightly else 'all'
 		aggregate_phot(photCat,which)#,**kwargs)
 #	elif args.nightly:
 #		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('aggregate phot')
-	elif args.zeropoint:
-		zero_points(dataMap,procmap,photCat)
-		timerLog('zeropoints')
+	if args.updatemeta:
+		# XXX clean up direct filename refs here
+		psum = load_agg_phot('photsum_sdssrefstars_all.fits')
+		frameStats,objStats = find_star_outliers(psum)
+		update_framelist_withoutliers(frameStats)
+		write_object_badlist(objStats,frameStats,'sdssPhotSummary.fits')
+		timerLog('update metadata')
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()
