@@ -17,6 +17,9 @@ zp_phot_nominal = {'g':25.90,'i':25.40}
 
 bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
+seasonMjdRange = {'2014':(56600,56900),'2015':(57000,57250),
+                  '2016':(57000,57600)}
+
 
 ##############################################################################
 #
@@ -57,11 +60,15 @@ class RmPhotCatalog(object):
 		mask = (self.bokPhot['flags'] & self.maskBits) > 0
 		for c in self.photCols:
 			self.bokPhot[c].mask |= mask
-	def load_bok_phot(self,nogroup=False):
+	def load_bok_phot(self,nogroup=False,season=None):
 		try:
 			self.bokPhot = Table(Table.read(self.bokPhotFn),masked=True)
 		except IOError:
 			return None
+		if season is not None:
+			ii = np.where( (self.bokPhot['mjd']<seasonMjdRange[season][0]) &
+			               (self.bokPhot['mjd']<seasonMjdRange[season][1]) )[0]
+			self.bokPhot = self.bokPhot[ii]
 		if 'frameId' in self.bokPhot.colnames:
 			self.bokPhot.rename_column('frameId','frameIndex')
 		# XXX this is here because the table is currently saved unmasked
