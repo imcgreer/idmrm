@@ -206,3 +206,6 @@ checkwcs:
 checkproc:
 	python bokrmgnostic.py $(LOGARGS) $(UTARGS) $(BANDARGS) --checkproc $(XARGS)
 
+checkgains:
+	python bokrmgnostic.py $(LOGARGS) --checkgains $(XARGS)
+
