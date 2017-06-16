@@ -66,7 +66,7 @@ class RmPhotCatalog(object):
 		except IOError:
 			return None
 		if season is not None:
-			ii = np.where( (self.bokPhot['mjd']<seasonMjdRange[season][0]) &
+			ii = np.where( (self.bokPhot['mjd']>seasonMjdRange[season][0]) &
 			               (self.bokPhot['mjd']<seasonMjdRange[season][1]) )[0]
 			self.bokPhot = self.bokPhot[ii]
 		if 'frameId' in self.bokPhot.colnames:
@@ -839,6 +839,7 @@ def load_agg_phot(aggPhotFn):
 
 
 def binned_phot_stats(which='cleanstars',**kwargs):
+	season = kwargs.pop('season','2014')
 	if which=='cleanstars':
 		phot = CleanSdssStarCatalog()
 	elif which=='allstars':
@@ -856,7 +857,7 @@ def binned_phot_stats(which='cleanstars',**kwargs):
 		phot.bokPhot['filter'] = 'g'
 		phot.bokPhot = phot.bokPhot.group_by(['objId','filter'])
 	else:
-		phot.load_bok_phot()
+		phot.load_bok_phot(season=season)
 	phot.apply_flag_mask()
 	phot.apply_frame_mask()
 	bs = phot.bin_stats_by_ref_mag(**kwargs)
