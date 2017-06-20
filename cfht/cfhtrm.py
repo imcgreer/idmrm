@@ -60,14 +60,18 @@ def make_obs_db():
 	t['ccdGain'] = np.zeros((1,36),dtype=np.float32)
 	t['ampGain'] = np.zeros((1,36,2),dtype=np.float32)
 	t['elixirZp'] = np.float32(0.0)
+	nfiles = 0
 	for i,fn in enumerate(t['fileName']):
 		try:
 			set_obs_db_item(t,i,os.path.join(cfhtImgDir,fn+'.fits.fz'))
+			nfiles += 1
 		except IOError:
+			print fn,' not found'
 			continue
 	t.sort('expNum')
 	t.write(os.path.join('.','config','sdssrm-cfht.fits.gz'),
 	        overwrite=True)
+	print 'found %d/%d files' % (nfiles,len(t))
 
 class CfhtObsDb(object):
 	def __init__(self):
