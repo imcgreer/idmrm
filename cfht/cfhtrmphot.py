@@ -14,9 +14,6 @@ from bokpipe import bokphot,bokpl,bokproc,bokutil
 import bokrmpipe
 import cfhtrm
 
-# Nominal limits to classify night as "photometric"
-zp_phot_nominal = {'g':25.90,'i':25.40}
-
 nom_pixscl = 0.18555
 
 cfhtrm_aperRad = np.array([0.75,1.5,2.275,3.4,4.55,6.67,10.]) / nom_pixscl
@@ -68,7 +65,7 @@ if __name__=='__main__':
 	                help='make source extractor catalogs and PSF models')
 	args = parser.parse_args()
 	#
-	dataMap = cfhtrm.CfhtObsDb()
+	dataMap = cfhtrm.CfhtDataMap()
 	if args.catalogs:
 		make_sextractor_catalogs(dataMap)
 
