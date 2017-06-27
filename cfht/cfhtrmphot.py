@@ -10,8 +10,9 @@ from astropy.table import Table,vstack,hstack,join
 from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
 
-from bokpipe import bokphot,bokpl,bokproc,bokutil
-import bokrmpipe
+from bokpipe import bokphot,bokpl,bokproc,bokutil,bokastrom
+from bokpipe.bokdm import SimpleFileNameMap
+import bokrmpipe,bokrmphot
 import cfhtrm
 
 nom_pixscl = 0.18555
@@ -19,19 +20,28 @@ nom_pixscl = 0.18555
 cfhtrm_aperRad = np.array([0.75,1.5,2.275,3.4,4.55,6.67,10.]) / nom_pixscl
 
 def _cat_worker(dataMap,imFile,**kwargs):
+	clobber = kwargs.pop('clobber',False)
+	verbose = kwargs.pop('verbose',0)
 	bokutil.mplog('extracting catalogs for '+imFile)
-	import pdb; pdb.set_trace()
 	imgFile = dataMap('img')(imFile)
 	psfFile = dataMap('psf')(imFile)
+	aheadFile = imgFile.replace('.fits','.ahead')
 	tmpFile = imgFile.replace('.fz','')
-	if not os.path.exists(psfFile):
-		catFile = dataMap('wcscat')(imFile)
-		print '-->',imgFile
-		subprocess.call(['funpack',imgFile])
+	catFile = dataMap('wcscat')(imFile)
+	print '-->',imgFile
+	if not os.path.exists(catFile):
+		if not os.path.exists(tmpFile):
+			subprocess.call('funpack',imgFile)
 		bokphot.sextract(tmpFile,catFile,full=False,**kwargs)
+	if not os.path.exists(psfFile):
+		if not os.path.exists(tmpFile):
+			subprocess.call('funpack',imgFile)
 		bokphot.run_psfex(catFile,psfFile,instrument='cfhtmegacam',**kwargs)
-		if False:
-			os.remove(catFile)
+	if not os.path.exists(aheadFile):
+		bokastrom.scamp_solve(tmpFile,catFile,filt='r',
+		                      clobber=clobber,verbose=verbose)
+	if False:
+		os.remove(catFile)
 	catFile = dataMap('cat')(imFile)
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
@@ -40,8 +50,7 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	if os.path.exists(tmpFile):
 		os.remove(tmpFile)
 
-def make_sextractor_catalogs(dataMap,**kwargs):
-	procmap = map # XXX
+def make_sextractor_catalogs(dataMap,procMap,**kwargs):
 	apers = ','.join(['%.2f'%a for a in cfhtrm_aperRad])
 	kwargs.setdefault('DETECT_MINAREA','10.0')
 	kwargs.setdefault('DETECT_THRESH','2.0')
@@ -52,10 +61,50 @@ def make_sextractor_catalogs(dataMap,**kwargs):
 	kwargs.setdefault('SATUR_KEY','SATURATE')
 	kwargs.setdefault('GAIN_KEY','GAIN')
 	files = dataMap.getFiles()
+	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
+	status = procMap(p_cat_worker,files)
+
+def _phot_worker(dataMap,photCat,inp,matchRad=2.0):
+	imFile,frame = inp
+	refCat = photCat.refCat
+	catPfx = photCat.name
+	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
+	                         '.'.join(['',catPfx,'phot']))
+	catFile = dataMap('cat')(imFile)
+	aperFile = fmap(imFile)
+	tabs = []
+	f = fits.open(catFile)
+	for ccdNum,hdu in enumerate(f[1:]):
+		c = hdu.data
+		m1,m2,sep = bokrmphot.srcor(refCat['ra'],refCat['dec'],
+		                            c['ALPHA_J2000'],c['DELTA_J2000'],matchRad)
+		if len(m1)==0:
+			continue
+		t = Table()
+		t['x'] = c['X_IMAGE'][m2]
+		t['y'] = c['Y_IMAGE'][m2]
+		t['objId'] = refCat['objId'][m1]
+		t['counts'] = c['FLUX_APER'][m2]
+		t['countsErr'] = c['FLUXERR_APER'][m2]
+		t['flags'] = c['FLAGS'][m2]
+		t['psfCounts'] = c['FLUX_PSF'][m2]
+		t['psfCountsErr'] = c['FLUXERR_PSF'][m2]
+		t['ccdNum'] = ccdNum
+		t['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
+		t['__nmatch'] = len(m1)
+		t['__sep'] = sep
+		tabs.append(t)
+	vstack(tabs).write(aperFile,overwrite=True)
+
+def make_phot_catalogs(dataMap,procMap):
+	import bokrmphot
+	files = zip(*dataMap.getFiles(with_frames=True))
 	files = [files[0]]
 	print files
-	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
-	status = procmap(p_cat_worker,files)
+	photCat = bokrmphot.load_target_catalog('sdss',None,None)
+	photCat.load_ref_catalog()
+	p_phot_worker = partial(_phot_worker,dataMap,photCat)
+	status = procMap(p_phot_worker,files)
 
 if __name__=='__main__':
 	import sys
@@ -63,9 +112,41 @@ if __name__=='__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--catalogs',action='store_true',
 	                help='make source extractor catalogs and PSF models')
+	parser.add_argument('--dophot',action='store_true',
+	                help='make source extractor catalogs and PSF models')
+	parser.add_argument('--zeropoint',action='store_true',
+	                help='do zero point calculation')
+	parser.add_argument('-p','--processes',type=int,default=1,
+	                help='number of processes to use [default=single]')
+	parser.add_argument('-R','--redo',action='store_true',
+	                help='redo (overwrite existing files)')
+	parser.add_argument('-v','--verbose',action='count',
+	                help='increase output verbosity')
 	args = parser.parse_args()
 	#
+	if args.processes > 1:
+		pool = multiprocessing.Pool(args.processes)
+	else:
+		procMap = map
 	dataMap = cfhtrm.CfhtDataMap()
+	timerLog = bokutil.TimerLog()
 	if args.catalogs:
-		make_sextractor_catalogs(dataMap)
+		make_sextractor_catalogs(dataMap,procMap,
+		                         clobber=args.redo,verbose=args.verbose)
+		timerLog('sextractor catalogs')
+	if args.dophot:
+		make_phot_catalogs(dataMap,procMap)
+		timerLog('photometry catalogs')
+	if args.zeropoint:
+		bokrmphot.zero_points(dataMap,procMap,photCat)
+		timerLog('zeropoints')
+#	if args.lightcurves:
+#		photCat.load_bok_phot(nogroup=True)
+#		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,old=args.old)
+#		timerLog('lightcurves')
+#	if args.aggregate:
+#		photCat.load_bok_phot(nogroup=True)
+#		which = 'nightly' if args.nightly else 'all'
+#		aggregate_phot(photCat,which)#,**kwargs)
+#		timerLog('aggregate phot')
 

@@ -41,6 +41,7 @@ def make_obs_db():
 	arxDat = Table.read(os.path.join(cfhtImgDir,
 	                                 'result_g5s2i0ftxwta9jbn.csv'))
 	t = Table()
+	t['frameIndex'] = arxDat['Sequence Number']
 	t['expNum'] = arxDat['Sequence Number']
 	t['fileName'] = np.char.strip(arxDat['Product ID'])
 	t['utDate'] = 'YYYYMMDD'
@@ -104,6 +105,7 @@ class CfhtDataMap(object):
 		cfhtDir = '.' # XXX
 		self.obsDb = Table.read(os.path.join(cfhtDir,'config',
 		                                     'sdssrm-cfht.fits.gz'))
+		self.obsDb['frameIndex'] = self.obsDb['expNum'] # XXX
 		if not os.path.exists(cfhtCatDir):
 			os.makedirs(cfhtCatDir)
 		for utDir in self.obsDb['utDir']:
@@ -114,11 +116,14 @@ class CfhtDataMap(object):
 		                for ftype in ['cat','wcscat','psf'] }
 		self.fmap['img'] = SimpleFileNameMap(cfhtImgDir,cfhtCatDir,
 		                                     fromRaw=True)
-	def getFiles(self,filt=None):
+	def getFiles(self,filt=None,with_frames=False):
 		s = self.obsDb['good'].copy()
 		f = np.char.add(np.char.add(self.obsDb['utDir'][s],'/'),
 		                self.obsDb['fileName'][s])
-		return f
+		if with_frames:
+			return f,np.where(s)[0]
+		else:
+			return f
 	def __call__(self,ftype):
 		return self.fmap[ftype]
 
