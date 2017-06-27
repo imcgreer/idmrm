@@ -31,11 +31,11 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	print '-->',imgFile
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
-			subprocess.call('funpack',imgFile)
+			subprocess.call(['funpack',imgFile])
 		bokphot.sextract(tmpFile,catFile,full=False,**kwargs)
 	if not os.path.exists(psfFile):
 		if not os.path.exists(tmpFile):
-			subprocess.call('funpack',imgFile)
+			subprocess.call(['funpack',imgFile])
 		bokphot.run_psfex(catFile,psfFile,instrument='cfhtmegacam',**kwargs)
 	if not os.path.exists(aheadFile):
 		bokastrom.scamp_solve(tmpFile,catFile,filt='r',
@@ -45,7 +45,7 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	catFile = dataMap('cat')(imFile)
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
-			subprocess.call('funpack',imgFile)
+			subprocess.call(['funpack',imgFile])
 		bokphot.sextract(tmpFile,catFile,psfFile,full=True,**kwargs)
 	if os.path.exists(tmpFile):
 		os.remove(tmpFile)
@@ -126,6 +126,7 @@ if __name__=='__main__':
 	#
 	if args.processes > 1:
 		pool = multiprocessing.Pool(args.processes)
+		procMap = pool.map
 	else:
 		procMap = map
 	dataMap = cfhtrm.CfhtDataMap()
