@@ -9,8 +9,31 @@ from astropy.table import Table,vstack,hstack,join
 from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
 
-from bokpipe import bokphot,bokpl,bokproc,bokutil
-import bokrmpipe
+##############################################################################
+#
+# utilities for joining indexed tables (more efficient than table.join())
+#
+##############################################################################
+
+def map_ids(ids1,ids2):
+	ii = -np.ones(ids2.max()+1,dtype=int)
+	ii[ids2] = np.arange(len(ids2))
+	return ii[ids1]
+
+def join_by_id(tab1,tab2,idkey):
+	ii = map_ids(tab1[idkey],tab2[idkey])
+	# avoid duplication
+	tab2 = tab2.copy()
+	for c in tab1.colnames:
+		if c in tab2.colnames:
+			del tab2[c]
+	return hstack([tab1,tab2[ii]])
+
+def join_by_frameid(tab1,tab2):
+	return join_by_id(tab1,tab2,'frameIndex')
+
+def join_by_objid(tab1,tab2):
+	return join_by_id(tab1,tab2,'objId')
 
 ##############################################################################
 #
@@ -89,4 +112,43 @@ def image_zeropoint(imCat,instrCfg):
 			t['aperCorr'][0,ccd] = invfratio.mean(axis=0).filled(0)
 	#
 	return t
+
+def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,minNstar=1):
+	isbok = False
+	if isbok:
+		ccdj = photTab['ccdNum'] - 1
+	else:
+		ccdj = photTab['ccdNum']
+	ii = map_ids(photTab['frameIndex'],zpTab['frameIndex'])
+	print '--> ',len(photTab),len(ii)
+	#
+	obsdat = dataMap.obsDb['frameIndex','airmass','mjdMid','expTime'].copy()
+	obsdat.rename_column('mjdMid','mjd')
+	photTab = join_by_frameid(photTab,obsdat)
+	#
+	nAper = photTab['counts'].shape[-1]
+	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
+	# cannot for the life of me figure out how to do this with indexing
+	for apNum in range(nAper):
+		apCorr[np.arange(len(ii)),apNum] = \
+		            zpTab['aperCorr'][ii,ccdj,apNum]
+	zp = np.ma.array(zpTab['aperZp'][ii],
+	                 mask=zpTab['aperNstar'][ii]<minNstar)
+	zp = zp[np.arange(len(ii)),ccdj][:,np.newaxis]
+	corrCps = photTab['counts'] * apCorr 
+	if not isbok:
+		corrCps /= photTab['expTime'][:,np.newaxis]
+	poscounts = np.ma.array(corrCps,mask=photTab['counts']<=0)
+	magAB = zp - 2.5*np.ma.log10(poscounts)
+	magErr = 1.0856*np.ma.divide(photTab['countsErr'],poscounts)
+	photTab['aperMag'] = magAB.filled(99.99)
+	photTab['aperMagErr'] = magErr.filled(0)
+	# convert AB mag to nanomaggie
+	fluxConv = 10**(-0.4*(zp-22.5))
+	flux = corrCps * fluxConv
+	fluxErr = photTab['countsErr'] * apCorr * fluxConv
+	photTab['aperFlux'] = flux.filled(0)
+	photTab['aperFluxErr'] = fluxErr.filled(0)
+	print 'writing to ',outFile
+	photTab.write(outFile,overwrite=True)
 

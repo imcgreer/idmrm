@@ -142,6 +142,22 @@ def calc_zeropoints(dataMap,procMap,photCat,zpFile):
 	zptab['frameIndex'] = dataMap.obsDb['frameIndex'][frames]
 	zptab.write(zpFile,overwrite=True)
 
+def calibrate_lightcurves(dataMap,photCat,zpFile):
+	zpTab = Table.read(zpFile)
+	outFile = 'test.fits'
+	catPfx = photCat.name
+	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
+	                         '.'.join(['',catPfx,'phot']))
+	files = dataMap.getFiles()
+	t = []
+	for f in files:
+		try:
+			t.append(Table.read(fmap(f)))
+		except IOError:
+			pass
+	photTab = vstack(t)
+	idmrmphot.calibrate_lightcurves(photTab,zpTab,dataMap,outFile)
+
 if __name__=='__main__':
 	import sys
 	import argparse
@@ -150,6 +166,8 @@ if __name__=='__main__':
 	                help='make source extractor catalogs and PSF models')
 	parser.add_argument('--dophot',action='store_true',
 	                help='make source extractor catalogs and PSF models')
+	parser.add_argument('--lightcurves',action='store_true',
+	                help='construct lightcurves')
 	parser.add_argument('--zeropoint',action='store_true',
 	                help='do zero point calculation')
 	parser.add_argument('--catalog',type=str,default='sdssrm',
@@ -188,13 +206,15 @@ if __name__=='__main__':
 	if args.zeropoint:
 		calc_zeropoints(dataMap,procMap,photCat,args.zptable)
 		timerLog('zeropoints')
-#	if args.lightcurves:
-#		photCat.load_bok_phot(nogroup=True)
-#		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,old=args.old)
-#		timerLog('lightcurves')
+	if args.lightcurves:
+		calibrate_lightcurves(dataMap,photCat,args.zptable)
+		timerLog('lightcurves')
 #	if args.aggregate:
 #		photCat.load_bok_phot(nogroup=True)
 #		which = 'nightly' if args.nightly else 'all'
 #		aggregate_phot(photCat,which)#,**kwargs)
 #		timerLog('aggregate phot')
+	timerLog.dump()
+	if args.processes > 1:
+		pool.close()
 

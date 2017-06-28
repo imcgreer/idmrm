@@ -105,7 +105,9 @@ class CfhtDataMap(object):
 		cfhtDir = '.' # XXX
 		self.obsDb = Table.read(os.path.join(cfhtDir,'config',
 		                                     'sdssrm-cfht.fits.gz'))
-		self.obsDb['frameIndex'] = self.obsDb['expNum'] # XXX
+		self.obsDb['frameIndex'] = np.arange(len(self.obsDb)) # XXX
+		self.obsDb['mjdMid'] = self.obsDb['mjdStart'] + \
+		                        self.obsDb['expTime']/(24.*60*60)
 		if not os.path.exists(cfhtCatDir):
 			os.makedirs(cfhtCatDir)
 		for utDir in self.obsDb['utDir']:
