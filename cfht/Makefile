@@ -10,3 +10,6 @@ catalogs:
 phot:
 	$(CFHTRMPHOT) --dophot $(XARGS)
 
+zeropoints:
+	$(CFHTRMPHOT) --zeropoint --catalog sdss $(XARGS)
+

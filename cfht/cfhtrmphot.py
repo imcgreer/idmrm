@@ -14,6 +14,7 @@ from bokpipe import bokphot,bokpl,bokproc,bokutil,bokastrom
 from bokpipe.bokdm import SimpleFileNameMap
 import bokrmpipe,bokrmphot
 import cfhtrm
+import idmrmphot
 
 nom_pixscl = 0.18555
 
@@ -29,6 +30,10 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	tmpFile = imgFile.replace('.fz','')
 	catFile = dataMap('wcscat')(imFile)
 	print '-->',imgFile
+	kwargs.setdefault('SEEING_FWHM','1.0')
+	kwargs.setdefault('PIXEL_SCALE','0.18555')
+	kwargs.setdefault('SATUR_KEY','SATURATE')
+	kwargs.setdefault('GAIN_KEY','GAIN')
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
@@ -43,6 +48,14 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	if False:
 		os.remove(catFile)
 	catFile = dataMap('cat')(imFile)
+	# XXX while using these as primary
+	apers = ','.join(['%.2f'%a for a in cfhtrm_aperRad])
+	kwargs.setdefault('DETECT_MINAREA','10.0')
+	kwargs.setdefault('DETECT_THRESH','2.0') 
+	kwargs.setdefault('ANALYSIS_THRESH','2.0')
+	kwargs.setdefault('PHOT_APERTURES',apers)
+	kwargs.setdefault('PARAMETERS_NAME',
+	                  os.path.join(bokphot.configDir,'cfht_catalog_tmp.par'))
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
@@ -51,15 +64,6 @@ def _cat_worker(dataMap,imFile,**kwargs):
 		os.remove(tmpFile)
 
 def make_sextractor_catalogs(dataMap,procMap,**kwargs):
-	apers = ','.join(['%.2f'%a for a in cfhtrm_aperRad])
-	kwargs.setdefault('DETECT_MINAREA','10.0')
-	kwargs.setdefault('DETECT_THRESH','2.0')
-	kwargs.setdefault('ANALYSIS_THRESH','2.0')
-	kwargs.setdefault('PHOT_APERTURES',apers)
-	kwargs.setdefault('SEEING_FWHM','1.0')
-	kwargs.setdefault('PIXEL_SCALE','0.18555')
-	kwargs.setdefault('SATUR_KEY','SATURATE')
-	kwargs.setdefault('GAIN_KEY','GAIN')
 	files = dataMap.getFiles()
 	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
@@ -106,6 +110,38 @@ def make_phot_catalogs(dataMap,procMap):
 	p_phot_worker = partial(_phot_worker,dataMap,photCat)
 	status = procMap(p_phot_worker,files)
 
+def _zp_worker(dataMap,photCat,instrCfg,inp):
+	imFile,filt,expTime = inp
+	catPfx = photCat.name
+	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
+	                         '.'.join(['',catPfx,'phot']))
+	try:
+		imCat = idmrmphot.load_catalog(fmap(imFile),filt,expTime,
+		                               photCat.refCat,instrCfg)
+	except IOError:
+		return idmrmphot.generate_zptab_entry(instrCfg) # null entry
+	return idmrmphot.image_zeropoint(imCat,instrCfg)
+
+def calc_zeropoints(dataMap,procMap,photCat,zpFile):
+	class cfhtCfg(object):
+		name = 'cfht'
+		nCCD = 40
+		nAper = 7
+		aperNum = -2
+		ccd0 = 0
+		minStar = 10
+		magRange = {'g':(17.0,19.5),'i':(17.0,19.5)}
+		def colorXform(self,mag,clr,band):
+			return mag
+	files,frames = dataMap.getFiles(with_frames=True)
+	filt = dataMap.obsDb['filter'][frames]
+	expTime = dataMap.obsDb['expTime'][frames]
+	p_zp_worker = partial(_zp_worker,dataMap,photCat,cfhtCfg())
+	zps = procMap(p_zp_worker,zip(files,filt,expTime))
+	zptab = vstack(zps)
+	zptab['frameIndex'] = dataMap.obsDb['frameIndex'][frames]
+	zptab.write(zpFile,overwrite=True)
+
 if __name__=='__main__':
 	import sys
 	import argparse
@@ -116,10 +152,18 @@ if __name__=='__main__':
 	                help='make source extractor catalogs and PSF models')
 	parser.add_argument('--zeropoint',action='store_true',
 	                help='do zero point calculation')
+	parser.add_argument('--catalog',type=str,default='sdssrm',
+	                help='reference catalog ([sdssrm]|sdss|cfht)')
 	parser.add_argument('-p','--processes',type=int,default=1,
 	                help='number of processes to use [default=single]')
 	parser.add_argument('-R','--redo',action='store_true',
 	                help='redo (overwrite existing files)')
+	parser.add_argument('--lctable',type=str,
+	                help='lightcurve table')
+	parser.add_argument('--zptable',type=str,default='cfhtrm_zeropoints.fits',
+	                help='zeropoints table')
+	parser.add_argument('--catdir',type=str,
+	                help='directory containing photometry catalogs')
 	parser.add_argument('-v','--verbose',action='count',
 	                help='increase output verbosity')
 	args = parser.parse_args()
@@ -130,6 +174,9 @@ if __name__=='__main__':
 	else:
 		procMap = map
 	dataMap = cfhtrm.CfhtDataMap()
+	photCat = bokrmphot.load_target_catalog(args.catalog,args.catdir,
+	                                        args.lctable)
+	photCat.load_ref_catalog()
 	timerLog = bokutil.TimerLog()
 	if args.catalogs:
 		make_sextractor_catalogs(dataMap,procMap,
@@ -139,7 +186,7 @@ if __name__=='__main__':
 		make_phot_catalogs(dataMap,procMap)
 		timerLog('photometry catalogs')
 	if args.zeropoint:
-		bokrmphot.zero_points(dataMap,procMap,photCat)
+		calc_zeropoints(dataMap,procMap,photCat,args.zptable)
 		timerLog('zeropoints')
 #	if args.lightcurves:
 #		photCat.load_bok_phot(nogroup=True)
