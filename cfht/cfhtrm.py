@@ -108,6 +108,7 @@ class CfhtDataMap(object):
 		self.obsDb['frameIndex'] = np.arange(len(self.obsDb)) # XXX
 		self.obsDb['mjdMid'] = self.obsDb['mjdStart'] + \
 		                        self.obsDb['expTime']/(24.*60*60)
+		self.allUtDates = np.unique(self.obsDb['utDate'])
 		if not os.path.exists(cfhtCatDir):
 			os.makedirs(cfhtCatDir)
 		for utDir in self.obsDb['utDir']:
@@ -118,14 +119,25 @@ class CfhtDataMap(object):
 		                for ftype in ['cat','wcscat','psf'] }
 		self.fmap['img'] = SimpleFileNameMap(cfhtImgDir,cfhtCatDir,
 		                                     fromRaw=True)
-	def getFiles(self,filt=None,with_frames=False):
+	def getFiles(self,filt=None,utDate=None,with_frames=False):
 		s = self.obsDb['good'].copy()
 		f = np.char.add(np.char.add(self.obsDb['utDir'][s],'/'),
 		                self.obsDb['fileName'][s])
+		if filt is not None:
+			s &= np.in1d(self.obsDb['filter'],filt)
+		if utDate is not None:
+			utdlist = list(set([ utd for pfx in utDate 
+			                           for utd in self.allUtDates 
+			                             if utd.startswith(pfx) ]))
+			isUtd = np.zeros_like(s)
+			for utd in utdlist:
+				isUtd |= ( self.obsDb['utDate'] == utd )
+			s &= isUtd
+		frames = np.where(s)[0]
 		if with_frames:
-			return f,np.where(s)[0]
+			return f[frames],frames
 		else:
-			return f
+			return f[frames]
 	def __call__(self,ftype):
 		return self.fmap[ftype]
 
