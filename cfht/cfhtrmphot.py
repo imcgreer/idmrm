@@ -64,7 +64,10 @@ def _cat_worker(dataMap,imFile,**kwargs):
 		os.remove(tmpFile)
 
 def make_sextractor_catalogs(dataMap,procMap,**kwargs):
-	files = dataMap.getFiles()
+	utDate = kwargs.pop('utDate')
+	if utDate:
+		utDate = utDate.split(',')
+	files = dataMap.getFiles(utDate=utDate)
 	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
 
@@ -176,6 +179,8 @@ if __name__=='__main__':
 	                help='number of processes to use [default=single]')
 	parser.add_argument('-R','--redo',action='store_true',
 	                help='redo (overwrite existing files)')
+	parser.add_argument('-u','--utdate',type=str,default=None,
+	                help='UT date(s) to process [default=all]')
 	parser.add_argument('--lctable',type=str,
 	                help='lightcurve table')
 	parser.add_argument('--zptable',type=str,default='cfhtrm_zeropoints.fits',
@@ -197,7 +202,7 @@ if __name__=='__main__':
 	photCat.load_ref_catalog()
 	timerLog = bokutil.TimerLog()
 	if args.catalogs:
-		make_sextractor_catalogs(dataMap,procMap,
+		make_sextractor_catalogs(dataMap,procMap,utDate=args.utdate,
 		                         clobber=args.redo,verbose=args.verbose)
 		timerLog('sextractor catalogs')
 	if args.dophot:
