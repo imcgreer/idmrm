@@ -140,7 +140,9 @@ def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,minNstar=1):
 		corrCps /= photTab['expTime'][:,np.newaxis]
 	poscounts = np.ma.array(corrCps,mask=photTab['counts']<=0)
 	magAB = zp - 2.5*np.ma.log10(poscounts)
-	magErr = 1.0856*np.ma.divide(photTab['countsErr'],poscounts)
+	magErr = 1.0856*np.ma.divide(photTab['countsErr'],
+	                             np.ma.array(photTab['counts'],
+	                                         mask=poscounts.mask))
 	photTab['aperMag'] = magAB.filled(99.99)
 	photTab['aperMagErr'] = magErr.filled(0)
 	# convert AB mag to nanomaggie
