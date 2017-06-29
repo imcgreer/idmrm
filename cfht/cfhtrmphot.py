@@ -106,8 +106,6 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0):
 def make_phot_catalogs(dataMap,procMap):
 	import bokrmphot
 	files = zip(*dataMap.getFiles(with_frames=True))
-	files = [files[0]]
-	print files
 	photCat = bokrmphot.load_target_catalog('sdss',None,None)
 	photCat.load_ref_catalog()
 	p_phot_worker = partial(_phot_worker,dataMap,photCat)

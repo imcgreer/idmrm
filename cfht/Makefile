@@ -7,8 +7,8 @@ CFHTRMPHOT := python cfhtrmphot.py
 catalogs:
 	$(CFHTRMPHOT) --catalogs $(XARGS)
 
-phot:
-	$(CFHTRMPHOT) --dophot $(XARGS)
+phot_sdss:
+	$(CFHTRMPHOT) --dophot --catalog sdss $(XARGS)
 
 zeropoints_sdss:
 	$(CFHTRMPHOT) --zeropoint --catalog sdss $(XARGS)
