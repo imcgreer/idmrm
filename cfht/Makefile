@@ -16,3 +16,9 @@ zeropoints_sdss:
 lightcurves_sdss:
 	$(CFHTRMPHOT) --lightcurves --catalog sdss $(XARGS)
 
+phot_rm:
+	$(CFHTRMPHOT) --dophot --catalog sdssrm $(XARGS)
+
+lightcurves_rm:
+	$(CFHTRMPHOT) --lightcurves --catalog sdssrm $(XARGS)
+

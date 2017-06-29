@@ -71,7 +71,7 @@ def make_sextractor_catalogs(dataMap,procMap,**kwargs):
 	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
 
-def _phot_worker(dataMap,photCat,inp,matchRad=2.0):
+def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False):
 	imFile,frame = inp
 	refCat = photCat.refCat
 	catPfx = photCat.name
@@ -79,6 +79,9 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0):
 	                         '.'.join(['',catPfx,'phot']))
 	catFile = dataMap('cat')(imFile)
 	aperFile = fmap(imFile)
+	print '--> ',imFile
+	if os.path.exists(aperFile) and not redo:
+		return
 	tabs = []
 	f = fits.open(catFile)
 	for ccdNum,hdu in enumerate(f[1:]):
@@ -101,13 +104,13 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0):
 		t['__nmatch'] = len(m1)
 		t['__sep'] = sep
 		tabs.append(t)
+	if len(tabs)==0:
+		print 'no objects!'
+		return
 	vstack(tabs).write(aperFile,overwrite=True)
 
-def make_phot_catalogs(dataMap,procMap):
-	import bokrmphot
+def make_phot_catalogs(dataMap,procMap,photCat):
 	files = zip(*dataMap.getFiles(with_frames=True))
-	photCat = bokrmphot.load_target_catalog('sdss',None,None)
-	photCat.load_ref_catalog()
 	p_phot_worker = partial(_phot_worker,dataMap,photCat)
 	status = procMap(p_phot_worker,files)
 
@@ -119,6 +122,7 @@ def _zp_worker(dataMap,photCat,instrCfg,inp):
 	try:
 		imCat = idmrmphot.load_catalog(fmap(imFile),filt,expTime,
 		                               photCat.refCat,instrCfg)
+		print imFile,' done!'
 	except IOError:
 		return idmrmphot.generate_zptab_entry(instrCfg) # null entry
 	return idmrmphot.image_zeropoint(imCat,instrCfg)
@@ -145,6 +149,19 @@ def calc_zeropoints(dataMap,procMap,photCat,zpFile):
 
 def calibrate_lightcurves(dataMap,photCat,zpFile):
 	zpTab = Table.read(zpFile)
+	if True:
+		# these are hacks to fill the zeropoints table for CCDs with no
+		# measurements... this may be necessary as sometimes too few reference
+		# stars will land on a given CCD. but need to understand it better.
+		for row in zpTab:
+			iszero = row['aperZp'] == 0
+			if np.sum(~iszero) > 10:
+				row['aperZp'][iszero] = np.median(row['aperZp'][~iszero])
+				row['aperNstar'][iszero] = 999
+			for j in range(7):
+				iszero = row['aperCorr'][:,j] == 0
+				if np.sum(~iszero) > 5:
+					row['aperCorr'][iszero,j] = np.median(row['aperCorr'][~iszero,j])
 	outFile = 'test.fits'
 	catPfx = photCat.name
 	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
@@ -204,7 +221,7 @@ if __name__=='__main__':
 		                         clobber=args.redo,verbose=args.verbose)
 		timerLog('sextractor catalogs')
 	if args.dophot:
-		make_phot_catalogs(dataMap,procMap)
+		make_phot_catalogs(dataMap,procMap,photCat)
 		timerLog('photometry catalogs')
 	if args.zeropoint:
 		calc_zeropoints(dataMap,procMap,photCat,args.zptable)
