@@ -832,8 +832,11 @@ def aggregate_phot(photCat,which,aperNum=2,**kwargs):
 aperPhotKeys = [ 'aper'+k1+k2 for k1 in ['Mag','Flux'] 
                                 for k2 in ['','Err','Ivar'] ]
 
-def load_agg_phot(aggPhotFn):
+def load_agg_phot(aggPhotFn,minErr=1e-2):
 	phot = Table.read(aggPhotFn)
+	# this is to get out of the photon-dominated regime
+	if minErr is not None:
+		phot['n'] &= phot['aperMagErr'] > minErr
 	# XXX why aren't masks carrying through here?
 	for k in aperPhotKeys+['dmag','chival','chi2']:
 		phot[k].mask |= ~phot['n']

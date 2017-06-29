@@ -22,3 +22,7 @@ phot_rm:
 lightcurves_rm:
 	$(CFHTRMPHOT) --lightcurves --catalog sdssrm $(XARGS)
 
+aggregate:
+	$(CFHTRMPHOT) --aggregate --lctable cfhtrm_sdssrefstars.fits \
+	              --catalog sdss
+

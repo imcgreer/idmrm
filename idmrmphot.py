@@ -52,13 +52,10 @@ def srcor(ra1,dec1,ra2,dec2,sep):
 
 # XXX for bok do by table groups [frameIndex] since catalogs are nightly
 
-def load_catalog(catFile,filt,expTime,refCat,instrCfg):
+def load_catalog(catFile,filt,refCat,instrCfg,verbose=False):
 	imCat = Table.read(catFile)
 	imCat = Table(imCat,masked=True)
 	jj = imCat['objId'] # XXX
-	# XXX hack for sextractor
-	if instrCfg.name == 'cfht':
-		imCat['flags'] = np.tile(imCat['flags'],(instrCfg.nAper,1)).T
 	imCat['refMag'] = instrCfg.colorXform(refCat[filt][jj],
 	                                   refCat['g'][jj]-refCat['i'][jj],filt)
 	isMag = ( (imCat['refMag'] > instrCfg.magRange[filt][0]) &
@@ -67,10 +64,13 @@ def load_catalog(catFile,filt,expTime,refCat,instrCfg):
 	         (imCat['countsErr'][:,instrCfg.aperNum] <= 0) |
 	         (imCat['flags'][:,instrCfg.aperNum] > 0) |
 	         ~isMag )
+	if verbose:
+		print '%d total objs, %d in magRange, %d selected' % \
+		          (len(imCat),isMag.sum(),(~mask).sum())
 	counts = np.ma.array(imCat['counts'][:,instrCfg.aperNum],mask=mask)
 	imCat['snr'] = np.ma.divide(counts,imCat['countsErr'][:,instrCfg.aperNum])
 	counts.mask |= imCat['snr'] < 15
-	mag = -2.5*np.ma.log10(counts/expTime)
+	mag = -2.5*np.ma.log10(counts)
 	imCat['dmag'] = imCat['refMag'] - mag
 	return imCat
 
@@ -84,13 +84,16 @@ def generate_zptab_entry(instrCfg):
 		t[k] = np.zeros(s,dtype=dt)
 	return t
 
-def image_zeropoint(imCat,instrCfg):
+def image_zeropoint(imCat,instrCfg,verbose=0):
 	t = generate_zptab_entry(instrCfg)
 	ccdObjs = imCat.group_by('ccdNum')
+	apNum = instrCfg.aperNum
 	for ccdNum,objs in zip(ccdObjs.groups.keys['ccdNum'],ccdObjs.groups):
 		ccd = ccdNum - instrCfg.ccd0
 		dMag = sigma_clip(objs['dmag'],sigma=2.2,iters=3)
 		nstar = np.ma.sum(~dMag.mask)
+		if verbose > 1:
+			print 'have %d/%d stars on ccd%d' % (nstar,len(dMag),ccdNum)
 		if nstar > instrCfg.minStar:
 			zp,ivar = np.ma.average(dMag,weights=objs['snr']**2,returned=True)
 			M = np.float((~dMag.mask).sum())
@@ -105,7 +108,7 @@ def image_zeropoint(imCat,instrCfg):
 			         (imCat['countsErr'] <= 0) |
 			         (imCat['flags'] > 0) )
 			counts = np.ma.array(objs['counts'][ii],mask=mask[ii])
-			fratio = np.ma.divide(counts,counts[:,-1][:,np.newaxis])
+			fratio = np.ma.divide(counts,counts[:,apNum][:,np.newaxis])
 			fratio = np.ma.masked_outside(fratio,0,1.5)
 			fratio = sigma_clip(fratio,axis=0)
 			invfratio = np.ma.power(fratio,-1)
@@ -136,8 +139,6 @@ def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,minNstar=1):
 	                 mask=zpTab['aperNstar'][ii]<minNstar)
 	zp = zp[np.arange(len(ii)),ccdj][:,np.newaxis]
 	corrCps = photTab['counts'] * apCorr 
-	if not isbok:
-		corrCps /= photTab['expTime'][:,np.newaxis]
 	poscounts = np.ma.array(corrCps,mask=photTab['counts']<=0)
 	magAB = zp - 2.5*np.ma.log10(poscounts)
 	magErr = 1.0856*np.ma.divide(photTab['countsErr'],

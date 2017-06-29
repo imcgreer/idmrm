@@ -21,7 +21,7 @@ nom_pixscl = 0.18555
 cfhtrm_aperRad = np.array([0.75,1.5,2.275,3.4,4.55,6.67,10.]) / nom_pixscl
 
 def _cat_worker(dataMap,imFile,**kwargs):
-	clobber = kwargs.pop('clobber',False)
+	clobber = kwargs.pop('redo',False)
 	verbose = kwargs.pop('verbose',0)
 	bokutil.mplog('extracting catalogs for '+imFile)
 	imgFile = dataMap('img')(imFile)
@@ -64,14 +64,11 @@ def _cat_worker(dataMap,imFile,**kwargs):
 		os.remove(tmpFile)
 
 def make_sextractor_catalogs(dataMap,procMap,**kwargs):
-	utDate = kwargs.pop('utDate')
-	if utDate:
-		utDate = utDate.split(',')
-	files = dataMap.getFiles(utDate=utDate)
+	files = dataMap.getFiles()
 	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
 
-def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False):
+def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 	imFile,frame = inp
 	refCat = photCat.refCat
 	catPfx = photCat.name
@@ -79,7 +76,8 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False):
 	                         '.'.join(['',catPfx,'phot']))
 	catFile = dataMap('cat')(imFile)
 	aperFile = fmap(imFile)
-	print '--> ',imFile
+	if verbose:
+		print '--> ',imFile
 	if os.path.exists(aperFile) and not redo:
 		return
 	tabs = []
@@ -90,59 +88,65 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False):
 		                            c['ALPHA_J2000'],c['DELTA_J2000'],matchRad)
 		if len(m1)==0:
 			continue
+		expTime = dataMap.obsDb['expTime'][frame]
 		t = Table()
 		t['x'] = c['X_IMAGE'][m2]
 		t['y'] = c['Y_IMAGE'][m2]
 		t['objId'] = refCat['objId'][m1]
-		t['counts'] = c['FLUX_APER'][m2]
-		t['countsErr'] = c['FLUXERR_APER'][m2]
-		t['flags'] = c['FLAGS'][m2]
-		t['psfCounts'] = c['FLUX_PSF'][m2]
-		t['psfCountsErr'] = c['FLUXERR_PSF'][m2]
+		t['counts'] = c['FLUX_APER'][m2] / expTime
+		t['countsErr'] = c['FLUXERR_APER'][m2] / expTime
+		t['flags'] = np.tile(c['FLAGS'][m2],(len(cfhtrm_aperRad),1)).T
+		t['psfCounts'] = c['FLUX_PSF'][m2] / expTime
+		t['psfCountsErr'] = c['FLUXERR_PSF'][m2] / expTime
 		t['ccdNum'] = ccdNum
 		t['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
 		t['__nmatch'] = len(m1)
 		t['__sep'] = sep
 		tabs.append(t)
 	if len(tabs)==0:
-		print 'no objects!'
+		if verbose:
+			print 'no objects!'
 		return
 	vstack(tabs).write(aperFile,overwrite=True)
 
-def make_phot_catalogs(dataMap,procMap,photCat):
+def make_phot_catalogs(dataMap,procMap,photCat,**kwargs):
 	files = zip(*dataMap.getFiles(with_frames=True))
-	p_phot_worker = partial(_phot_worker,dataMap,photCat)
+	p_phot_worker = partial(_phot_worker,dataMap,photCat,**kwargs)
 	status = procMap(p_phot_worker,files)
 
 def _zp_worker(dataMap,photCat,instrCfg,inp):
-	imFile,filt,expTime = inp
+	imFile,filt = inp
 	catPfx = photCat.name
 	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
 	                         '.'.join(['',catPfx,'phot']))
 	try:
-		imCat = idmrmphot.load_catalog(fmap(imFile),filt,expTime,
-		                               photCat.refCat,instrCfg)
-		print imFile,' done!'
+		print imFile
+		imCat = idmrmphot.load_catalog(fmap(imFile),filt,
+		                               photCat.refCat,instrCfg,verbose=True)
 	except IOError:
 		return idmrmphot.generate_zptab_entry(instrCfg) # null entry
 	return idmrmphot.image_zeropoint(imCat,instrCfg)
 
+class cfhtCfg(object):
+	name = 'cfht'
+	nCCD = 40
+	nAper = 7
+	aperNum = -2
+	ccd0 = 0
+	minStar = 10
+	magRange = {'g':(17.0,21.5),'i':(17.0,21.0)}
+	def colorXform(self,mag,clr,band):
+		return mag
+
 def calc_zeropoints(dataMap,procMap,photCat,zpFile):
-	class cfhtCfg(object):
-		name = 'cfht'
-		nCCD = 40
-		nAper = 7
-		aperNum = -2
-		ccd0 = 0
-		minStar = 10
-		magRange = {'g':(17.0,19.5),'i':(17.0,19.5)}
-		def colorXform(self,mag,clr,band):
-			return mag
 	files,frames = dataMap.getFiles(with_frames=True)
+#	if True:
+#		foo = np.where(dataMap.obsDb['frameIndex']==30)[0]
+#		files = files[foo]
+#		frames = frames[foo]
 	filt = dataMap.obsDb['filter'][frames]
-	expTime = dataMap.obsDb['expTime'][frames]
 	p_zp_worker = partial(_zp_worker,dataMap,photCat,cfhtCfg())
-	zps = procMap(p_zp_worker,zip(files,filt,expTime))
+	zps = procMap(p_zp_worker,zip(files,filt))
 	zptab = vstack(zps)
 	zptab['frameIndex'] = dataMap.obsDb['frameIndex'][frames]
 	zptab.write(zpFile,overwrite=True)
@@ -162,15 +166,17 @@ def calibrate_lightcurves(dataMap,photCat,zpFile):
 				iszero = row['aperCorr'][:,j] == 0
 				if np.sum(~iszero) > 5:
 					row['aperCorr'][iszero,j] = np.median(row['aperCorr'][~iszero,j])
-	outFile = 'test.fits'
+	outFile = 'cfhtrm_%s.fits' % photCat.name
 	catPfx = photCat.name
 	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
 	                         '.'.join(['',catPfx,'phot']))
-	files = dataMap.getFiles()
+	files_and_frames = dataMap.getFiles(with_frames=True)
 	t = []
-	for f in files:
+	for f,frameIdx in zip(*files_and_frames):
 		try:
-			t.append(Table.read(fmap(f)))
+			tab = Table.read(fmap(f))
+			tab['filter'] = dataMap.obsDb['filter'][frameIdx]
+			t.append(tab)
 		except IOError:
 			pass
 	photTab = vstack(t)
@@ -184,10 +190,12 @@ if __name__=='__main__':
 	                help='make source extractor catalogs and PSF models')
 	parser.add_argument('--dophot',action='store_true',
 	                help='make source extractor catalogs and PSF models')
-	parser.add_argument('--lightcurves',action='store_true',
-	                help='construct lightcurves')
 	parser.add_argument('--zeropoint',action='store_true',
 	                help='do zero point calculation')
+	parser.add_argument('--lightcurves',action='store_true',
+	                help='construct lightcurves')
+	parser.add_argument('--aggregate',action='store_true',
+	                help='construct aggregate photometry')
 	parser.add_argument('--catalog',type=str,default='sdssrm',
 	                help='reference catalog ([sdssrm]|sdss|cfht)')
 	parser.add_argument('-p','--processes',type=int,default=1,
@@ -216,12 +224,15 @@ if __name__=='__main__':
 	                                        args.lctable)
 	photCat.load_ref_catalog()
 	timerLog = bokutil.TimerLog()
+	kwargs = dict(redo=args.redo,verbose=args.verbose)
+	if args.utdate:
+		utDate = args.utdate.split(',')
+		dataMap.setUtDate(utDate)
 	if args.catalogs:
-		make_sextractor_catalogs(dataMap,procMap,utDate=args.utdate,
-		                         clobber=args.redo,verbose=args.verbose)
+		make_sextractor_catalogs(dataMap,procMap,**kwargs)
 		timerLog('sextractor catalogs')
 	if args.dophot:
-		make_phot_catalogs(dataMap,procMap,photCat)
+		make_phot_catalogs(dataMap,procMap,photCat,**kwargs)
 		timerLog('photometry catalogs')
 	if args.zeropoint:
 		calc_zeropoints(dataMap,procMap,photCat,args.zptable)
@@ -229,11 +240,12 @@ if __name__=='__main__':
 	if args.lightcurves:
 		calibrate_lightcurves(dataMap,photCat,args.zptable)
 		timerLog('lightcurves')
-#	if args.aggregate:
-#		photCat.load_bok_phot(nogroup=True)
+	if args.aggregate:
+		photCat.load_bok_phot(nogroup=True)
 #		which = 'nightly' if args.nightly else 'all'
-#		aggregate_phot(photCat,which)#,**kwargs)
-#		timerLog('aggregate phot')
+		which = 'all'
+		bokrmphot.aggregate_phot(photCat,which)#,**kwargs)
+		timerLog('aggregate phot')
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()

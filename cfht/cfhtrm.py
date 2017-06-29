@@ -119,12 +119,17 @@ class CfhtDataMap(object):
 		                for ftype in ['cat','wcscat','psf'] }
 		self.fmap['img'] = SimpleFileNameMap(cfhtImgDir,cfhtCatDir,
 		                                     fromRaw=True)
+		self._utDate = None
+	def setUtDate(self,utDate):
+		self._utDate = utDate
 	def getFiles(self,filt=None,utDate=None,with_frames=False):
 		s = self.obsDb['good'].copy()
 		f = np.char.add(np.char.add(self.obsDb['utDir'][s],'/'),
 		                self.obsDb['fileName'][s])
 		if filt is not None:
 			s &= np.in1d(self.obsDb['filter'],filt)
+		if utDate is None:
+			utDate = self._utDate
 		if utDate is not None:
 			utdlist = list(set([ utd for pfx in utDate 
 			                           for utd in self.allUtDates 
