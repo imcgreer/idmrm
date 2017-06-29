@@ -34,6 +34,9 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	kwargs.setdefault('PIXEL_SCALE','0.18555')
 	kwargs.setdefault('SATUR_KEY','SATURATE')
 	kwargs.setdefault('GAIN_KEY','GAIN')
+	if not os.path.exists(imgFile):
+		print imgFile,' not found!'
+		return
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
