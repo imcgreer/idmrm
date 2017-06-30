@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os
+import os,sys
 import numpy as np
 import subprocess
 import multiprocessing
@@ -26,7 +26,7 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	bokutil.mplog('extracting catalogs for '+imFile)
 	imgFile = dataMap('img')(imFile)
 	psfFile = dataMap('psf')(imFile)
-	aheadFile = imgFile.replace('.fits','.ahead')
+	aheadFile = imgFile.replace('.fits.fz','.ahead')
 	tmpFile = imgFile.replace('.fz','')
 	catFile = dataMap('wcscat')(imFile)
 	print '-->',imgFile
@@ -48,6 +48,9 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	if not os.path.exists(aheadFile):
 		bokastrom.scamp_solve(tmpFile,catFile,filt='r',
 		                      clobber=clobber,verbose=verbose)
+		if not os.path.exists(aheadFile):
+			print imgFile,' WCS failed!'
+			return
 	if False:
 		os.remove(catFile)
 	catFile = dataMap('cat')(imFile)
@@ -185,6 +188,51 @@ def calibrate_lightcurves(dataMap,photCat,zpFile):
 	photTab = vstack(t)
 	idmrmphot.calibrate_lightcurves(photTab,zpTab,dataMap,outFile)
 
+def check_status(dataMap):
+	from collections import defaultdict
+	missing = defaultdict(list)
+	incomplete = defaultdict(list)
+	files = dataMap.getFiles()
+	for i,f in enumerate(files):
+		imgFile = dataMap('img')(f)
+		if not os.path.exists(imgFile):
+			missing['img'].append(f)
+			continue
+		nCCD = fits.getheader(imgFile,0)['NEXTEND']
+		aheadFile = imgFile.replace('.fits','.ahead')
+		if not os.path.exists(aheadFile):
+			missing['ahead'].append(f)
+		for k in ['wcscat','psf','cat']:
+			outFile = dataMap(k)(f)
+			if not os.path.exists(outFile):
+				missing[k].append(f)
+			else:
+				ff = fits.open(outFile)
+				n = len(ff)-1
+				if k == 'wcscat':
+					n //= 2 # ldac
+				if n < nCCD:
+					incomplete[k].append(f)
+		sys.stdout.write("\r%d/%d" % (i+1,len(files)))
+		sys.stdout.flush()
+	print
+	print 'total images: ',len(files)
+	for k in ['img','head','wcscat','psf','cat']:
+		n = len(files) - len(missing[k]) - len(incomplete[k])
+		print '%10s %5d %5d %5d' % (k,n,len(missing[k]),len(incomplete[k]))
+	d = { f:1 for f in missing[k] for k in missing }
+	if len(d)>0:
+		logfile = open('missing.log','w')
+		for f in d:
+			logfile.write(f+'\n')
+		logfile.close()
+	d = { f:1 for f in incomplete[k] for k in incomplete }
+	if len(d)>0:
+		logfile = open('incomplete.log','w')
+		for f in d:
+			logfile.write(f+'\n')
+		logfile.close()
+
 if __name__=='__main__':
 	import sys
 	import argparse
@@ -192,13 +240,15 @@ if __name__=='__main__':
 	parser.add_argument('--catalogs',action='store_true',
 	                help='make source extractor catalogs and PSF models')
 	parser.add_argument('--dophot',action='store_true',
-	                help='make source extractor catalogs and PSF models')
+	                help='do photometry on images')
 	parser.add_argument('--zeropoint',action='store_true',
 	                help='do zero point calculation')
 	parser.add_argument('--lightcurves',action='store_true',
 	                help='construct lightcurves')
 	parser.add_argument('--aggregate',action='store_true',
 	                help='construct aggregate photometry')
+	parser.add_argument('--status',action='store_true',
+	                help='check processing status')
 	parser.add_argument('--catalog',type=str,default='sdssrm',
 	                help='reference catalog ([sdssrm]|sdss|cfht)')
 	parser.add_argument('-p','--processes',type=int,default=1,
@@ -249,6 +299,8 @@ if __name__=='__main__':
 		which = 'all'
 		bokrmphot.aggregate_phot(photCat,which)#,**kwargs)
 		timerLog('aggregate phot')
+	if args.status:
+		check_status(dataMap)
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()
