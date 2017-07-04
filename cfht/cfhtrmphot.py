@@ -69,9 +69,15 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	if os.path.exists(tmpFile):
 		os.remove(tmpFile)
 
+def _exc_cat_worker(*args,**kwargs):
+	try:
+		_cat_worker(*args,**kwargs)
+	except:
+		pass
+
 def make_sextractor_catalogs(dataMap,procMap,**kwargs):
 	files = dataMap.getFiles()
-	p_cat_worker = partial(_cat_worker,dataMap,**kwargs)
+	p_cat_worker = partial(_exc_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
 
 def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
@@ -190,6 +196,7 @@ def calibrate_lightcurves(dataMap,photCat,zpFile):
 
 def check_status(dataMap):
 	from collections import defaultdict
+	from bokpipe.bokastrom import read_headers
 	missing = defaultdict(list)
 	incomplete = defaultdict(list)
 	files = dataMap.getFiles()
@@ -199,15 +206,23 @@ def check_status(dataMap):
 			missing['img'].append(f)
 			continue
 		nCCD = fits.getheader(imgFile,0)['NEXTEND']
-		aheadFile = imgFile.replace('.fits','.ahead')
+		aheadFile = imgFile.replace('.fits.fz','.ahead')
 		if not os.path.exists(aheadFile):
 			missing['ahead'].append(f)
+		else:
+			hdrs = read_headers(aheadFile)
+			if len(hdrs) < nCCD:
+				incomplete['ahead'].append(f)
 		for k in ['wcscat','psf','cat']:
 			outFile = dataMap(k)(f)
 			if not os.path.exists(outFile):
 				missing[k].append(f)
 			else:
-				ff = fits.open(outFile)
+				try:
+					ff = fits.open(outFile)
+				except IOError:
+					incomplete[k].append(f)
+					continue
 				n = len(ff)-1
 				if k == 'wcscat':
 					n //= 2 # ldac
@@ -217,16 +232,16 @@ def check_status(dataMap):
 		sys.stdout.flush()
 	print
 	print 'total images: ',len(files)
-	for k in ['img','head','wcscat','psf','cat']:
+	for k in ['img','ahead','wcscat','psf','cat']:
 		n = len(files) - len(missing[k]) - len(incomplete[k])
 		print '%10s %5d %5d %5d' % (k,n,len(missing[k]),len(incomplete[k]))
-	d = { f:1 for f in missing[k] for k in missing }
+	d = { f for l in missing.values() for f in l }
 	if len(d)>0:
 		logfile = open('missing.log','w')
 		for f in d:
 			logfile.write(f+'\n')
 		logfile.close()
-	d = { f:1 for f in incomplete[k] for k in incomplete }
+	d = { f for l in incomplete.values() for f in l }
 	if len(d)>0:
 		logfile = open('incomplete.log','w')
 		for f in d:
