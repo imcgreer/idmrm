@@ -83,7 +83,7 @@ class RmPhotCatalog(object):
 			self.bokPhot = self.bokPhot.group_by(['objId','filter'])
 		return self.bokPhot
 	def get_aperture_table(self,aperNum):
-		phot = self.bokPhot['frameIndex','objId','mjd','filter'].copy()
+		phot = self.bokPhot['frameIndex','objId','mjd','filter','ccdNum'].copy()
 		for c in self.photCols + ['flags']:
 			phot[c] = self.bokPhot[c][:,aperNum]
 		phot['aperFluxIvar'] = np.ma.power(phot['aperFluxErr'],-2)

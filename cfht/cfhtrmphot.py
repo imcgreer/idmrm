@@ -37,14 +37,25 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	if not os.path.exists(imgFile):
 		print imgFile,' not found!'
 		return
+	if True:
+		# a few widely spaced ccds
+		pix = np.array([ fits.getdata(imgFile,ccdNum)[::8] 
+		                           for ccdNum in [10,16,21,33] ])
+		sky = sigma_clip(pix).mean()
+		if verbose > 0:
+			print 'sky level is %.2f' % sky
+		kwargs.setdefault('BACK_TYPE','MANUAL')
+		kwargs.setdefault('BACK_VALUE','%.1f'%sky)
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
-		bokphot.sextract(tmpFile,catFile,full=False,**kwargs)
+		bokphot.sextract(tmpFile,catFile,full=False,
+		                 clobber=clobber,verbose=verbose,**kwargs)
 	if not os.path.exists(psfFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
-		bokphot.run_psfex(catFile,psfFile,instrument='cfhtmegacam',**kwargs)
+		bokphot.run_psfex(catFile,psfFile,instrument='cfhtmegacam',
+		                  clobber=clobber,verbose=verbose,**kwargs)
 	if not os.path.exists(aheadFile):
 		bokastrom.scamp_solve(tmpFile,catFile,filt='r',
 		                      clobber=clobber,verbose=verbose)
@@ -62,10 +73,16 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	kwargs.setdefault('PHOT_APERTURES',apers)
 	kwargs.setdefault('PARAMETERS_NAME',
 	                  os.path.join(bokphot.configDir,'cfht_catalog_tmp.par'))
+	#kwargs.setdefault('BACK_SIZE','64,128')
+	#kwargs.setdefault('BACK_FILTERSIZE','1')
+	kwargs.setdefault('BACKPHOTO_TYPE','LOCAL')
+	#kwargs.setdefault('CHECKIMAGE_TYPE','BACKGROUND')
+	#kwargs.setdefault('CHECKIMAGE_NAME',imgFile.replace('.fits.fz','.back.fits'))
 	if not os.path.exists(catFile):
 		if not os.path.exists(tmpFile):
 			subprocess.call(['funpack',imgFile])
-		bokphot.sextract(tmpFile,catFile,psfFile,full=True,**kwargs)
+		bokphot.sextract(tmpFile,catFile,psfFile,full=True,
+		                 clobber=clobber,verbose=verbose,**kwargs)
 	if os.path.exists(tmpFile):
 		os.remove(tmpFile)
 
@@ -112,6 +129,7 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 		t['psfCountsErr'] = c['FLUXERR_PSF'][m2] / expTime
 		t['ccdNum'] = ccdNum
 		t['frameIndex'] = dataMap.obsDb['frameIndex'][frame]
+		t['__number'] = c['NUMBER'][m2]
 		t['__nmatch'] = len(m1)
 		t['__sep'] = sep
 		tabs.append(t)
@@ -137,7 +155,7 @@ def _zp_worker(dataMap,photCat,instrCfg,inp):
 		                               photCat.refCat,instrCfg,verbose=True)
 	except IOError:
 		return idmrmphot.generate_zptab_entry(instrCfg) # null entry
-	return idmrmphot.image_zeropoint(imCat,instrCfg)
+	return idmrmphot.zeropoint_focalplane(imCat,instrCfg)
 
 class cfhtCfg(object):
 	name = 'cfht'
@@ -146,9 +164,9 @@ class cfhtCfg(object):
 	aperNum = -2
 	ccd0 = 0
 	minStar = 10
-	magRange = {'g':(17.0,21.5),'i':(17.0,21.0)}
+	magRange = {'g':(17.0,20.5),'i':(17.0,21.0)}
 	def colorXform(self,mag,clr,band):
-		return mag
+		return mag + -0.0761*clr + 0.08775
 
 def calc_zeropoints(dataMap,procMap,photCat,zpFile):
 	files,frames = dataMap.getFiles(with_frames=True)
@@ -165,7 +183,7 @@ def calc_zeropoints(dataMap,procMap,photCat,zpFile):
 
 def calibrate_lightcurves(dataMap,photCat,zpFile):
 	zpTab = Table.read(zpFile)
-	if True:
+	if False:
 		# these are hacks to fill the zeropoints table for CCDs with no
 		# measurements... this may be necessary as sometimes too few reference
 		# stars will land on a given CCD. but need to understand it better.
@@ -312,7 +330,7 @@ if __name__=='__main__':
 		photCat.load_bok_phot(nogroup=True)
 #		which = 'nightly' if args.nightly else 'all'
 		which = 'all'
-		bokrmphot.aggregate_phot(photCat,which)#,**kwargs)
+		bokrmphot.aggregate_phot(photCat,which,aperNum=-2)#,**kwargs)
 		timerLog('aggregate phot')
 	if args.status:
 		check_status(dataMap)

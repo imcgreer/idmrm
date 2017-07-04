@@ -74,14 +74,61 @@ def load_catalog(catFile,filt,refCat,instrCfg,verbose=False):
 	imCat['dmag'] = imCat['refMag'] - mag
 	return imCat
 
-def generate_zptab_entry(instrCfg):
+def generate_zptab_entry(instrCfg,byccd=False):
 	t = Table()
 	for k,dt in [('aperZp','f4'),('aperZpRms','f4'),
 	             ('aperNstar','i4'),('aperCorr','f4')]:
-		s = (1,instrCfg.nCCD)
+		s = (1,)
+		if byccd:
+			s += (instrCfg.nCCD,)
 		if k == 'aperCorr':
-			s = s + (instrCfg.nAper,)
+			s += (instrCfg.nAper,)
 		t[k] = np.zeros(s,dtype=dt)
+	return t
+
+def _calc_zeropoint(objs,instrCfg):
+	apNum = instrCfg.aperNum
+	dMag = sigma_clip(objs['dmag'],sigma=2.2,iters=3)
+	nstar = np.ma.sum(~dMag.mask)
+	zp,zprms,aperCorr = 0.0,0.0,0.0
+	if nstar > instrCfg.minStar:
+		#
+		zp,ivar = np.ma.average(dMag,weights=objs['snr']**2,returned=True)
+		M = np.float((~dMag.mask).sum())
+		wsd = np.sqrt(np.sum((dMag-zp)**2*objs['snr']**2) /
+		                   ((M-1)/M*np.sum(objs['snr']**-2)))
+		nstar = len(dMag.compressed())
+		zprms = 1.0856 / wsd #* ivar**-0.5
+		#
+		mask = dMag.mask | (objs['snr'].filled(0) < 50)
+		counts = np.ma.array(objs['counts'])
+		counts[mask,:] = np.ma.masked
+		fratio = np.ma.divide(counts,counts[:,apNum][:,np.newaxis])
+		fratio = np.ma.masked_outside(fratio,0,1.5)
+		fratio = sigma_clip(fratio,axis=0)
+		invfratio = np.ma.power(fratio,-1)
+		aperCorr = invfratio.mean(axis=0).filled(0)
+	return nstar,zp,zprms,aperCorr
+
+def zeropoint_focalplane(imCat,instrCfg,verbose=0):
+	t = generate_zptab_entry(instrCfg)
+	nstar,zp,zprms,aperCorr = _calc_zeropoint(imCat,instrCfg)
+	t['aperNstar'][:] = nstar
+	t['aperZp'][:] = zp
+	t['aperZpRms'][:] = zprms
+	t['aperCorr'][:] = aperCorr
+	return t
+
+def zeropoint_byccd(imCat,instrCfg,verbose=0):
+	t = generate_zptab_entry(instrCfg,True)
+	ccdObjs = imCat.group_by('ccdNum')
+	for ccdNum,objs in zip(ccdObjs.groups.keys['ccdNum'],ccdObjs.groups):
+		ccd = ccdNum - instrCfg.ccd0
+		nstar,zp,zprms,aperCorr = _calc_zeropoint(objs,instrCfg)
+		t['aperNstar'][0,ccd] = nstar
+		t['aperZp'][0,ccd] = zp
+		t['aperZpRms'][0,ccd] = zprms
+		t['aperCorr'][0,ccd] = aperCorr
 	return t
 
 def image_zeropoint(imCat,instrCfg,verbose=0):
@@ -103,11 +150,12 @@ def image_zeropoint(imCat,instrCfg,verbose=0):
 			t['aperZp'][0,ccd] = zp
 			t['aperZpRms'][0,ccd] = 1.0856 / wsd #* ivar**-0.5
 			#
-			ii = np.where(objs['snr'] > 30)[0]
-			mask = ( (imCat['counts'] <= 0) |
-			         (imCat['countsErr'] <= 0) |
-			         (imCat['flags'] > 0) )
-			counts = np.ma.array(objs['counts'][ii],mask=mask[ii])
+#			ii = np.where(objs['snr'] > 30)[0]
+#			mask = ( (imCat['counts'] <= 0) |
+#			         (imCat['countsErr'] <= 0) |
+#			         (imCat['flags'] > 0) )
+			mask = dMag.mask | (objs['snr'] < 30)
+			counts = np.ma.array(objs['counts'],mask=mask)
 			fratio = np.ma.divide(counts,counts[:,apNum][:,np.newaxis])
 			fratio = np.ma.masked_outside(fratio,0,1.5)
 			fratio = sigma_clip(fratio,axis=0)
@@ -116,7 +164,9 @@ def image_zeropoint(imCat,instrCfg,verbose=0):
 	#
 	return t
 
-def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,minNstar=1):
+def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,
+                          zptmode='focalplane',apermode='focalplane',
+                          fill=True,minNstar=1):
 	isbok = False
 	if isbok:
 		ccdj = photTab['ccdNum'] - 1
@@ -130,14 +180,33 @@ def calibrate_lightcurves(photTab,zpTab,dataMap,outFile,minNstar=1):
 	photTab = join_by_frameid(photTab,obsdat)
 	#
 	nAper = photTab['counts'].shape[-1]
-	apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
-	# cannot for the life of me figure out how to do this with indexing
-	for apNum in range(nAper):
-		apCorr[np.arange(len(ii)),apNum] = \
-		            zpTab['aperCorr'][ii,ccdj,apNum]
+	apCorr = np.ma.array(zpTab['aperCorr'][ii],
+	                     mask=zpTab['aperCorr'][ii]==0)
+	if apermode == 'focalplane':
+		pass #apCorr = apCorr.mean(axis=1)
+	elif apermode == 'ccd':
+		raise NotImplementedError # started here in case it is needed
+		if fill:
+			_apCorr = apCorr.mean(axis=1)
+			apCorr[apCorr.mask] = _apCorr[apCorr.mask]
+		apCorr = np.zeros((len(ii),nAper),dtype=np.float32)
+		# cannot for the life of me figure out how to do this with indexing
+		for apNum in range(nAper):
+			apCorr[np.arange(len(ii)),apNum] = \
+			            zpTab['aperCorr'][ii,ccdj,apNum]
+	else:
+		raise ValueError
+	#
 	zp = np.ma.array(zpTab['aperZp'][ii],
 	                 mask=zpTab['aperNstar'][ii]<minNstar)
-	zp = zp[np.arange(len(ii)),ccdj][:,np.newaxis]
+	if zptmode == 'focalplane':
+		pass #zp = zp.mean(axis=1)
+	elif zptmode == 'ccd':
+		zp = zp[np.arange(len(ii)),ccdj]
+	else:
+		raise ValueError
+	zp = zp[:,np.newaxis]
+	#
 	corrCps = photTab['counts'] * apCorr 
 	poscounts = np.ma.array(corrCps,mask=photTab['counts']<=0)
 	magAB = zp - 2.5*np.ma.log10(poscounts)
