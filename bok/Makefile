@@ -12,6 +12,10 @@ ifdef RAWDATA
 	DATAARGS := -r $(RAWDATA)
 endif
 
+ifndef BOKRMARCHIVE
+	BOKRMARCHIVE := $(HOME)/data/observing/Bok/90Prime/RM 
+endif
+
 ifdef UTDATE
 	UTARGS := -u $(UTDATE)
 endif
@@ -39,9 +43,11 @@ BOKRMPHOT := python bokrmphot.py
 
 all_detrend: initproc badpix proc1 makeillum flats proc2 skysub
 
+# BOKRMARCHIVE is the location of the data store for raw data. It may not
+# be the same as RAWDATA: in my case RAWDATA contains uncompressed images
+# to speed up processing, while BOKRMARCHIVE contains the compressed images.
 obsdb:
-	$(BOKRMPIPE) --makeobsdb $(LOGARGS) \
-	             -r $(HOME)/data/observing/Bok/90Prime/RM $(XARGS)
+	$(BOKRMPIPE) --makeobsdb $(LOGARGS) -r $(BOKRMARCHIVE) $(XARGS)
 
 # Overscan-subtract all images, generate 2D biases and dome flats
 initproc:

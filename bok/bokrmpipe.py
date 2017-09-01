@@ -60,7 +60,7 @@ def make_obs_db(args):
 	fullObsDbFile = os.path.join(os.environ['BOK90PRIMERAWDIR'],
 	                             'sdssrm-allbok.fits')
 	if not os.path.exists(fullObsDbFile) or args.redo:
-		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201[3-6]????')))
+		utDirs = sorted(glob.glob(os.path.join(args.rawdir,'ut201[3-7]????')))
 		print utDirs
 		try:
 			obsDb = Table.read(fullObsDbFile)
