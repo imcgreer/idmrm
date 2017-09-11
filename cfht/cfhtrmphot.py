@@ -34,6 +34,9 @@ def _cat_worker(dataMap,imFile,**kwargs):
 	kwargs.setdefault('PIXEL_SCALE','0.18555')
 	kwargs.setdefault('SATUR_KEY','SATURATE')
 	kwargs.setdefault('GAIN_KEY','GAIN')
+	if not os.path.exists(aheadFile):
+		print aheadFile,' not found!'
+		return
 	if not os.path.exists(imgFile):
 		print imgFile,' not found!'
 		return
@@ -110,7 +113,11 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 	if os.path.exists(aperFile) and not redo:
 		return
 	tabs = []
-	f = fits.open(catFile)
+	try:
+		f = fits.open(catFile)
+	except:
+		print catFile,' not found!'
+		return
 	for ccdNum,hdu in enumerate(f[1:]):
 		c = hdu.data
 		m1,m2,sep = bokrmphot.srcor(refCat['ra'],refCat['dec'],
