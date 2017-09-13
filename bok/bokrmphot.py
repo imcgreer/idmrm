@@ -200,7 +200,7 @@ class CleanSdssStarCatalog(SdssStarCatalog):
 		refCat.remove_rows(m1)
 		print 'removed ',len(m1),' quasars from star catalog ',len(refCat)
 		# remove objects with bad photometry; bad list comes 
-		# from find_outliers
+		# from calc_group_stats
 		f = os.path.join(self.bokRmDataDir,'sdssPhotSummary.fits')
 		objSum = Table.read(f)
 		for b in 'gi':
@@ -875,23 +875,25 @@ def binned_phot_stats(which='cleanstars',**kwargs):
 #
 ##############################################################################
 
-def identify_bad_frames(frameStats,maxOutlierFrac=0.01):
+def identify_bad_frames(frameStats,maxOutlierFrac=0.05):
 	isbadframe = frameStats['outlierFrac'] > maxOutlierFrac
 	badFrames = frameStats['frameIndex'][isbadframe]
 	return badFrames
 
-def find_outliers(phot,thresh):
-	chival = phot['chival'].filled(0)
-	phot['outlier'] = np.abs(chival) > thresh
-	nbad = phot['n','outlier','chi2'].groups.aggregate(np.sum)
-	nbad = hstack([phot.groups.keys,nbad])
-	nbad['outlierFrac'] = nbad['outlier'].astype(float) / nbad['n']
-	nbad['rchi2'] = nbad['chi2'] / (nbad['n']-1)
-	return nbad
+def calc_group_stats(phot,thresh):
+	pstats = phot['n','chi2'].copy()
+	pstats['outlier'] = np.abs(phot['chival']) > thresh
+	pstats['chi2'].mask |= pstats['outlier']
+	gstats = pstats['n','outlier','chi2'].groups.aggregate(np.ma.sum)
+	gstats = hstack([pstats.groups.keys,gstats])
+	gstats['outlierFrac'] = gstats['outlier'].astype(float) / gstats['n']
+	ngood = gstats['n'] - gstats['outlier']
+	gstats['rchi2'] = gstats['chi2'] / (ngood-1)
+	return gstats
 
-def find_star_outliers(starPhot,fthresh=10.0,othresh=5.0):
+def calc_frame_stats(starPhot,fthresh=5.0,othresh=5.0):
 	fgroup = starPhot.group_by('frameIndex')
-	frameStats = find_outliers(fgroup,fthresh)
+	frameStats = calc_group_stats(fgroup,fthresh)
 	ogroup = starPhot.group_by(['objId','filter'])
 	# tag the bad frames before tagging lightcurve outliers
 	badFrames = identify_bad_frames(frameStats)
@@ -899,7 +901,7 @@ def find_star_outliers(starPhot,fthresh=10.0,othresh=5.0):
 	for k in aperPhotKeys+['dmag','chival','chi2']:
 		ogroup[k].mask |= isbad
 	ogroup['n'] |= isbad
-	objStats = find_outliers(ogroup,othresh)
+	objStats = calc_group_stats(ogroup,othresh)
 	return frameStats,objStats
 
 def __fill_summary_list(psum):
@@ -1016,7 +1018,7 @@ if __name__=='__main__':
 	if args.updatemeta:
 		# XXX clean up direct filename refs here
 		psum = load_agg_phot('photsum_sdssrefstars_all.fits')
-		frameStats,objStats = find_star_outliers(psum)
+		frameStats,objStats = calc_frame_stats(psum)
 		update_framelist_withoutliers(frameStats)
 		write_object_badlist(objStats,frameStats,'sdssPhotSummary.fits')
 		timerLog('update metadata')
