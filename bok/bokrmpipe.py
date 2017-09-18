@@ -246,7 +246,7 @@ if __name__=='__main__':
 		# this needs to go here
 		make_obs_db(args)
 		sys.exit(0)
-	dataMap = bokpl.init_data_map(args)
+	dataMap = bokpl.init_data_map(args,updatecaldb=False)#True)
 	season = get_observing_season(dataMap)
 	dataMap = config_rm_data(dataMap,args)
 	if args.gaia:
@@ -269,5 +269,9 @@ if __name__=='__main__':
 	kwargs['illum_filter_fun'] = IllumSelector()
 #	kwargs['skyflat_selector'] = SkyFlatSelector(season)
 	kwargs['header_fixes'] = build_headerfix_dict()
+	if True:
+		badccds= { 'bokrm.20150205.00%02d'%fr:
+		           np.array([False,False,False,True]) for fr in range(76,87) }
+		kwargs['gainMaskDb'] = { 'amp':{}, 'ccd':badccds }
 	bokpl.run_pipe(dataMap,args,**kwargs)
 
