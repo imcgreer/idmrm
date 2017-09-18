@@ -13,8 +13,8 @@ from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
 
 from bokpipe import bokphot,bokpl,bokgnostic
-from bokpipe.bokproc import ampOrder#,BokImStat
-from bokpipe.bokutil import BokImStat ###
+from bokpipe.bokproc import ampOrder,BokCalcGainBalanceFactors, \
+                            BokImStatWithPreProcessing
 import bokrmpipe
 import bokrmphot
 
@@ -182,22 +182,31 @@ def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,
 			plt.close()
 	plt.ion()
 
-def calc_sky_backgrounds(dataMap,outputFile):
+def calc_sky_backgrounds(dataMap,outputFile,redo=False):
 	extns = ['IM4']
-	imstat = BokImStat(extensions=extns,quickprocess=True,
+	imstat = BokImStatWithPreProcessing(extensions=extns,
 	                   stats_region='amp_central_quadrant',stats_stride=8)
 	skyvals = []
 	files,ii = dataMap.getFiles(imType='object',includebad=True,
 	                            with_frames=True)
+	if os.path.exists(outputFile) and not redo:
+		oldTab = Table.read(outputFile)
+		inOld = np.in1d(dataMap.obsDb['frameIndex'][ii],oldTab['frameIndex'])
+		files = files[~inOld]
+		ii = ii[~inOld]
+	else:
+		oldTab = None
 	rawfiles = map(dataMap('raw'),files)
 	imstat.process_files(rawfiles)
-	sky = imstat.meanVals[:,0].astype(np.float32)
+	sky = imstat.data['mean'][:,0].astype(np.float32)
 	tab = Table(dict(frameIndex=dataMap.obsDb['frameIndex'][ii],
 	                 utDate=dataMap.obsDb['utDate'][ii],
 	                 fileName=dataMap.obsDb['fileName'][ii],
 	                 filter=dataMap.obsDb['filter'][ii],
 	                 skyMean=sky))
-	tab.write(outputFile)
+	if oldTab is not None:
+		tab = vstack([oldTab,tab])
+	tab.write(outputFile,overwrite=True)
 	logf = open('data/bokrm_skysum.txt','w')
 	tab = Table.read(outputFile)
 	tab = tab.group_by(['utDate','filter'])
@@ -206,6 +215,7 @@ def calc_sky_backgrounds(dataMap,outputFile):
 		logf.write('%8s %3s %4d %10.1f %10.1f %10.1f\n' % \
 		           (k['utDate'],k['filter'],len(g),
 		            sky.mean(),sky.min(),sky.max()))
+	logf.close()
 
 def id_sky_frames(obsDb,skytab,utds,thresh=10000.):
 	frametab = obsDb['frameIndex','utDate','fileName','objName'].copy()
