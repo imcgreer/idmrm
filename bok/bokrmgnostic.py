@@ -38,15 +38,23 @@ def plot_gain_vals(g,raw=False,debug=False):
 	if debug:
 		gainBal = BokCalcGainBalanceFactors()
 #		gainBal.nSplineRejIter = 2
+#		gainBal.splineOrder = 1
 #		gainBal.splineRejThresh = 1.5
 		gainBal.ampRelGains = g['rawAmpGain']
 		gainBal.ccdRelGains = g['rawCcdGain']
 		gainBal.files = g['fileName']
 		gainBal.filters = g['filter']
-		badccds= { 'bokrm.20150205.00%02d'%fr:
+		kwargs = {}
+		#kwargs = dict(splineOrder=1,nSplineRejIter=2)#,nSplineKnots=2)
+		#kwargs = dict(gainTrendMethod='median')
+		badccds= { 'ut20150205/bokrm.20150205.00%02d'%fr:
 		           np.array([False,False,False,True]) for fr in range(76,87) }
+		for f in ['ksb_170601_073801_ori','ksb_170601_074339_ori',
+		          'ksb_170601_074916_ori','ksb_170601_075454_ori',
+		          'ksb_170601_080031_ori']:
+			badccds['ut20170601/'+f] = np.array([False,False,False,True])
 		gainBal.maskDb = { 'amp':{}, 'ccd':badccds }
-		dbgGainCor = gainBal.calc_mean_corrections()
+		dbgGainCor = gainBal.calc_mean_corrections(**kwargs)
 		dbg_ampgaincor = dbgGainCor[:,:,0]
 		dbg_ccdgaincor = dbgGainCor[:,::4,1]
 	axs = []
@@ -55,6 +63,7 @@ def plot_gain_vals(g,raw=False,debug=False):
 	for ccd in range(4):
 		amp = 4*ccd
 		ax = plt.subplot(5,4,ccd+1)
+		medgain = []
 		for b,sym in zip('gi','so'):
 			ii = np.where(g['filter']==b)[0]
 			if len(ii)>0:
@@ -62,6 +71,7 @@ def plot_gain_vals(g,raw=False,debug=False):
 				jj = np.where(~ampgains.mask)[0]
 				ax.plot(seqno[ii[jj]],ampgains[jj],'r'+sym,
 				        ms=2.5,mfc='none',mec='r',mew=1.1)
+				medgain.append(np.median(ccdgaincor[ii[jj],ccd]))
 				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
 				if len(jj)>0:
 					ax.plot(seqno[ii[jj]].data,ampgains[jj],'rx',
@@ -71,15 +81,17 @@ def plot_gain_vals(g,raw=False,debug=False):
 			ax.plot(seqno,dbg_ccdgaincor[:,ccd],color='g',ls='--',lw=1.4)
 		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
 		        size=8,va='top',transform=ax.transAxes)
-		medgain = np.median(ccdgaincor[:,ccd])
-		ax.text(0.50,0.99,'%.3f'%medgain,color='red',
-		        size=8,va='top',transform=ax.transAxes)
-		ax.set_ylim(medgain-0.025,medgain+0.025)
+		dy = 0.08
+		for _i,medg in enumerate(medgain):
+			ax.text(0.50,0.99-_i*dy,'%.3f'%medg,color='red',
+			        size=8,va='top',transform=ax.transAxes)
+		ax.set_ylim(min(medgain)-0.025,max(medgain)+0.025)
 		axs.append(ax)
 	for amp in range(16):
 		rowNum = amp//4
 		colNum = amp%4
 		ax = plt.subplot(5,4,4+(4*colNum+rowNum)+1)
+		medgain = []
 		for b,sym in zip('gi','so'):
 			ii = np.where(g['filter']==b)[0]
 			if len(ii)>0:
@@ -87,27 +99,30 @@ def plot_gain_vals(g,raw=False,debug=False):
 				jj = np.where(~ampgains.mask)[0]
 				ax.plot(seqno[ii[jj]],ampgains[jj],'b'+sym,
 				        ms=2.5,mfc='none',mec='b',mew=1.1)
+				medgain.append(np.median(ampgaincor[ii[jj],amp]))
 				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
 				if len(jj)>0:
 					ax.plot(seqno[ii[jj]].data,ampgains[jj],'bx',
 					        ms=2.5,mfc='none',mec='b',mew=1.1)
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		medgain = np.median(ampgaincor[:,amp])
-		ax.text(0.25,0.99,'%.3f'%medgain,color='blue',
-		        size=8,va='top',transform=ax.transAxes)
 		ax.plot(seqno,ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
 		if debug:
 			ax.plot(seqno,dbg_ampgaincor[:,amp],color='g',ls='--',lw=1.4)
-		ax.set_ylim(medgain-0.025,medgain+0.025)
+		dy = 0.08
+		for _i,medg in enumerate(medgain):
+			ax.text(0.50,0.99-_i*dy,'%.3f'%medg,color='red',
+			        size=8,va='top',transform=ax.transAxes)
 		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
 		rax = ax.twinx()
 		rax.plot(logsky,c='0.2',alpha=0.8,ls='-.',lw=1.5)
 		rax.tick_params(labelsize=8)
 		rax.set_ylim(0.99*logsky.min(),1.01*logsky.max())
+		ax.set_ylim(min(medgain)-0.025,max(medgain)+0.025)
 	for ax in axs:
-		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.01))
+		ax.yaxis.set_major_locator(ticker.MultipleLocator(0.01))
+		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.002))
 		ax.xaxis.set_visible(False)
 		ax.tick_params(labelsize=8)
 		ax.set_xlim(-1,g['gains'].shape[0]+1)
@@ -761,8 +776,9 @@ if __name__=='__main__':
 		check_bias_ramp(dataMap)
 	if args.checkgains:
 		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb,
-		               utDates=dataMap.getUtDates(),debug=args.debug,
-		               raw=args.rawgains,pdfFile=args.outfile)
+		               utDates=dataMap.getUtDates(sciOnly=True),
+		               debug=args.debug,raw=args.rawgains,
+		               pdfFile=args.outfile)
 	if args.cutouts:
 		photCat.load_bok_phot()
 		image_cutouts(dataMap,photCat,band=args.band,
