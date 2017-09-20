@@ -234,6 +234,8 @@ if __name__=='__main__':
 	                help='load only the sky flat frames')
 	parser.add_argument('--makeobsdb',action='store_true',
 	                help='make the observations database')
+	parser.add_argument('--updatecaldb',action='store_true',
+	                help='update calibration database')
 	parser.add_argument('--gaia',action='store_true',
 	                help='use GAIA astrometry')
 	parser.add_argument('--makebpmask',type=str,
@@ -246,7 +248,7 @@ if __name__=='__main__':
 		# this needs to go here
 		make_obs_db(args)
 		sys.exit(0)
-	dataMap = bokpl.init_data_map(args)
+	dataMap = bokpl.init_data_map(args,updatecaldb=args.updatecaldb)
 	season = get_observing_season(dataMap)
 	dataMap = config_rm_data(dataMap,args)
 	if args.gaia:
