@@ -61,6 +61,7 @@ ut20150109/bokrm.20150109.0028  bad sky / scattered light
 ut20150109/bokrm.20150109.0029  bad sky / scattered light
 ut20150109/bokrm.20150109.0048  bad sky / scattered light
 ut20150109/bokrm.20150109.0049  bad sky / scattered light
+ut20150205/bokrm.20150205.0087  bad sky
 ut20150209/d7062.0137           jumped
 ut20150307/bokrm.20150307.0009  trailed
 ut20150404/bokrm.20150404.0071
@@ -105,3 +106,5 @@ ut20150708/d7212.0062
 ut20160320/d7467.0099
 ut20160320/d7467.0100
 ut20160320/d7467.0101           bad read (aborted?)
+ut20160416/d7494.0167           bad sky
+ut20160416/d7494.0168           bad sky

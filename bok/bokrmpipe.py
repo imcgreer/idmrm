@@ -271,5 +271,19 @@ if __name__=='__main__':
 	kwargs['illum_filter_fun'] = IllumSelector()
 #	kwargs['skyflat_selector'] = SkyFlatSelector(season)
 	kwargs['header_fixes'] = build_headerfix_dict()
+	if True:
+		badccds= { 'ut20150205/bokrm.20150205.00%02d'%fr:
+		           np.array([False,False,False,True]) for fr in range(76,87) }
+		for f in ['ksb_170601_073801_ori','ksb_170601_074339_ori',
+		          'ksb_170601_074916_ori','ksb_170601_075454_ori',
+		          'ksb_170601_080031_ori']:
+			badccds['ut20170601/'+f] = np.array([False,False,False,True])
+		kwargs['gainMaskDb'] = { 'amp':{}, 'ccd':badccds }
+	if True:
+		kwargs['gainBalCfg'] = {'20160320':dict(splineOrder=1,
+		                                        nSplineRejIter=2),
+		                        '20160416':dict(splineOrder=1,
+		                                        nSplineRejIter=2),
+		                        '20160709':dict(gainTrendMethod='median')}
 	bokpl.run_pipe(dataMap,args,**kwargs)
 

@@ -1,0 +1,17 @@
+#!/usr/bin/make
+
+include Makefile
+
+ifndef UTDATE
+	UTARGS := -u 2017
+endif
+
+ifndef PROCARGS
+	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap
+endif
+
+INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
+            $(MPARGS) $(VERBOSE)
+
+export SKYFLATARGS := --masterskyflat
+

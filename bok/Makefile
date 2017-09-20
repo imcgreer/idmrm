@@ -41,7 +41,7 @@ INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 BOKRMPIPE := python bokrmpipe.py
 BOKRMPHOT := python bokrmphot.py
 
-all_detrend: initproc badpix proc1 makeillum flats proc2 skysub
+all_detrend: initproc badpix proc1 makeillum flats proc2
 
 # BOKRMARCHIVE is the location of the data store for raw data. It may not
 # be the same as RAWDATA: in my case RAWDATA contains uncompressed images
@@ -59,7 +59,7 @@ biasramp:
 
 # XXX copy in a master bp mask from config dir
 badpix:
-	cp $(BOK90PRIMEOUTDIR)/bokpipe_v0.2/cals/BadPix* $(BOK90PRIMEOUTDIR)/bokpipe_v0.3/cals/
+	cp $(BOK90PRIMEOUTDIR)/badpix/BadPix* $(BOK90PRIMEOUTDIR)/bokpipe_v0.3/cals/
 
 # First-round processing: bias/domeflat correction, combine into CCD extensions
 proc1:

@@ -13,65 +13,19 @@ from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
 
 from bokpipe import bokphot,bokpl,bokgnostic
-from bokpipe.bokproc import ampOrder#,BokImStat
-from bokpipe.bokutil import BokImStat ###
+from bokpipe.bokproc import ampOrder,BokCalcGainBalanceFactors, \
+                            BokImStatWithPreProcessing
 import bokrmpipe
 import bokrmphot
 
-def test_spline_fit(seqno,gains,splinepars,ax,amp):
-	nknots = splinepars.get('nknots',1) # number interior knots
-	order = splinepars.get('order',2)
-	rejiter = splinepars.get('rejiter',1)
-	rejthresh = splinepars.get('rejthresh',2.5)
-	maxedgemissing = splinepars.get('maxedgemissing',4)
-	addknots = splinepars.get('addknots',[])
-	which = 'ccd' if amp<0 else 'amp'
-	knots = np.linspace(seqno[0],seqno[-1],nknots+2)[1:-1]
-	if len(addknots)>0:
-		print 'knots before: ',knots
-		for k in addknots:
-			knots = np.insert(knots,np.searchsorted(knots,k),k)
-		print 'knots after: ',knots
-	if np.allclose(gains,1):
-		rejiter = 0
-	ii = np.where(~(gains.mask))[0]
-	spfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
-	                            knots,bbox=[seqno[0],seqno[-1]],
-	                            k=order)
-	rejmask = np.zeros(len(seqno),dtype=np.bool)
-	for iternum in range(rejiter):
-		ii = np.where(~(gains.mask|rejmask))[0]
-		res = gains[ii] - spfit(seqno[ii])
-		resrms = np.ma.std(res)
-		rejmask[ii] |= np.abs(res/resrms) > rejthresh
-		ii = np.where(~(gains.mask|rejmask))[0]
-		spfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
-		                            knots,bbox=[seqno[0],seqno[-1]],
-		                            k=order)
-	spvals = spfit(seqno)
-	if ii[0] >= maxedgemissing or ii[-1] < (len(seqno)-maxedgemissing):
-		# force it to linear fit with no interior knots
-		linspfit = LSQUnivariateSpline(seqno[ii],gains[ii].filled(),
-		                               [],bbox=[seqno[0],seqno[-1]],
-		                               k=1)
-		print '%s %d filling '%(which,abs(amp)),
-		if ii[0] >= maxedgemissing:
-			print 'up to ',ii[0],
-			spvals[:ii[0]] = linspfit(seqno[:ii[0]])
-		if ii[-1] < (len(seqno)-maxedgemissing):
-			spvals[ii[-1]:] = linspfit(seqno[ii[-1]:])
-			print 'past ',ii[-1],
-		print
-	ax.plot(seqno,spvals,c='g')
-	if rejmask.sum() > 0:
-		ax.scatter(seqno[rejmask],gains[rejmask],marker='x',c='0.2',s=50)
-		res = gains - spfit(seqno)
-		print '%s %d rejected '%(which,abs(amp)),
-		print seqno[rejmask],gains[rejmask],res.data[rejmask]/resrms
-
-def plot_gain_vals(g,raw=False,splinepars=None):
+def plot_gain_vals(g,raw=False,debug=False):
 	plt.figure(figsize=(12,8))
 	plt.subplots_adjust(0.04,0.02,0.97,0.99,0.28,0.05)
+	if True:
+		bad = np.any(np.isnan(g['gainCor'].reshape(-1,32)),axis=1)
+		if bad.sum() > 0:
+			print "NaN's encountered in ",list(g['fileName'][bad])
+		g = g[~bad]
 	if raw:
 		gains = np.ma.dstack([g['rawAmpGain'],
 		                      np.repeat(g['rawCcdGain'],4,axis=1)])
@@ -81,12 +35,35 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 		gains = np.ma.array(g['gains'],mask=g['gains']==0)
 		ampgaincor = g['gainCor'][:,:,0]
 		ccdgaincor = g['gainCor'][:,::4,1]
+	if debug:
+		gainBal = BokCalcGainBalanceFactors()
+#		gainBal.nSplineRejIter = 2
+#		gainBal.splineOrder = 1
+#		gainBal.splineRejThresh = 1.5
+		gainBal.ampRelGains = g['rawAmpGain']
+		gainBal.ccdRelGains = g['rawCcdGain']
+		gainBal.files = g['fileName']
+		gainBal.filters = g['filter']
+		kwargs = {}
+		#kwargs = dict(splineOrder=1,nSplineRejIter=2)#,nSplineKnots=2)
+		#kwargs = dict(gainTrendMethod='median')
+		badccds= { 'ut20150205/bokrm.20150205.00%02d'%fr:
+		           np.array([False,False,False,True]) for fr in range(76,87) }
+		for f in ['ksb_170601_073801_ori','ksb_170601_074339_ori',
+		          'ksb_170601_074916_ori','ksb_170601_075454_ori',
+		          'ksb_170601_080031_ori']:
+			badccds['ut20170601/'+f] = np.array([False,False,False,True])
+		gainBal.maskDb = { 'amp':{}, 'ccd':badccds }
+		dbgGainCor = gainBal.calc_mean_corrections(**kwargs)
+		dbg_ampgaincor = dbgGainCor[:,:,0]
+		dbg_ccdgaincor = dbgGainCor[:,::4,1]
 	axs = []
 	nimg = gains.shape[0]
 	seqno = np.arange(nimg,dtype=np.float32)
 	for ccd in range(4):
 		amp = 4*ccd
 		ax = plt.subplot(5,4,ccd+1)
+		medgain = []
 		for b,sym in zip('gi','so'):
 			ii = np.where(g['filter']==b)[0]
 			if len(ii)>0:
@@ -94,24 +71,27 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 				jj = np.where(~ampgains.mask)[0]
 				ax.plot(seqno[ii[jj]],ampgains[jj],'r'+sym,
 				        ms=2.5,mfc='none',mec='r',mew=1.1)
+				medgain.append(np.median(ccdgaincor[ii[jj],ccd]))
 				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
 				if len(jj)>0:
 					ax.plot(seqno[ii[jj]].data,ampgains[jj],'rx',
 					        ms=2.5,mfc='none',mec='r',mew=1.1)
-				if splinepars is not None:
-					test_spline_fit(seqno[ii],ampgains,splinepars,ax,-(ccd+1))
 		ax.plot(seqno,ccdgaincor[:,ccd],c='orange',ls='-',lw=1.4)
+		if debug:
+			ax.plot(seqno,dbg_ccdgaincor[:,ccd],color='g',ls='--',lw=1.4)
 		ax.text(0.05,0.99,'CCD%d'%(ccd+1),
 		        size=8,va='top',transform=ax.transAxes)
-		medgain = np.median(ccdgaincor[:,ccd])
-		ax.text(0.50,0.99,'%.3f'%medgain,color='red',
-		        size=8,va='top',transform=ax.transAxes)
-		ax.set_ylim(medgain-0.025,medgain+0.025)
+		dy = 0.08
+		for _i,medg in enumerate(medgain):
+			ax.text(0.50,0.99-_i*dy,'%.3f'%medg,color='red',
+			        size=8,va='top',transform=ax.transAxes)
+		ax.set_ylim(min(medgain)-0.025,max(medgain)+0.025)
 		axs.append(ax)
 	for amp in range(16):
 		rowNum = amp//4
 		colNum = amp%4
 		ax = plt.subplot(5,4,4+(4*colNum+rowNum)+1)
+		medgain = []
 		for b,sym in zip('gi','so'):
 			ii = np.where(g['filter']==b)[0]
 			if len(ii)>0:
@@ -119,27 +99,30 @@ def plot_gain_vals(g,raw=False,splinepars=None):
 				jj = np.where(~ampgains.mask)[0]
 				ax.plot(seqno[ii[jj]],ampgains[jj],'b'+sym,
 				        ms=2.5,mfc='none',mec='b',mew=1.1)
+				medgain.append(np.median(ampgaincor[ii[jj],amp]))
 				jj = np.where(ampgains.mask & ~(ampgains.data==0))[0]
 				if len(jj)>0:
 					ax.plot(seqno[ii[jj]].data,ampgains[jj],'bx',
 					        ms=2.5,mfc='none',mec='b',mew=1.1)
-				if splinepars is not None:
-					test_spline_fit(seqno[ii],ampgains,splinepars,ax,amp)
 		ax.text(0.05,0.99,'IM%d'%ampOrder[amp],
 		        size=8,va='top',transform=ax.transAxes)
-		medgain = np.median(ampgaincor[:,amp])
-		ax.text(0.25,0.99,'%.3f'%medgain,color='blue',
-		        size=8,va='top',transform=ax.transAxes)
 		ax.plot(seqno,ampgaincor[:,amp],c='purple',ls='-',lw=1.4)
-		ax.set_ylim(medgain-0.025,medgain+0.025)
+		if debug:
+			ax.plot(seqno,dbg_ampgaincor[:,amp],color='g',ls='--',lw=1.4)
+		dy = 0.08
+		for _i,medg in enumerate(medgain):
+			ax.text(0.50,0.99-_i*dy,'%.3f'%medg,color='red',
+			        size=8,va='top',transform=ax.transAxes)
 		axs.append(ax)
 		logsky = np.log10(g['skys'][:,amp])
 		rax = ax.twinx()
 		rax.plot(logsky,c='0.2',alpha=0.8,ls='-.',lw=1.5)
 		rax.tick_params(labelsize=8)
 		rax.set_ylim(0.99*logsky.min(),1.01*logsky.max())
+		ax.set_ylim(min(medgain)-0.025,max(medgain)+0.025)
 	for ax in axs:
-		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.01))
+		ax.yaxis.set_major_locator(ticker.MultipleLocator(0.01))
+		ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.002))
 		ax.xaxis.set_visible(False)
 		ax.tick_params(labelsize=8)
 		ax.set_xlim(-1,g['gains'].shape[0]+1)
@@ -153,51 +136,66 @@ def load_gain_data(gfile,obsDb):
 		gdat[c][gdat[c]==0] = np.ma.masked
 	return gdat
 
-def all_gain_vals(diagdir,obsDb):
+def all_gain_vals(diagdir,obsDb,utDates=None):
 	from glob import glob
-	gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
-	#return vstack([ load_gain_data(gfile,obsDb) for gfile in gfiles ])
+	if utDates is not None:
+		gfiles = [ os.path.join(diagdir,'gainbal_%s.npz'%utd) 
+		              for utd in utDates ]
+	else:
+		gfiles = sorted(glob(os.path.join(diagdir,'gainbal*.npz')))
 	tabs = []
 	for gfile in gfiles:
 		try:
 			tabs.append(load_gain_data(gfile,obsDb))
 		except:
-			pass
+			print 'failed to load %s' % gfile
+			if False:
+				sys.exit(1)
 	return vstack(tabs)
 
-def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,
-                   raw=False,pdfFile=None):
+def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,utDates=None,
+                   raw=False,debug=False,pdfFile=None):
 	from matplotlib.backends.backend_pdf import PdfPages
 	if pdfFile is None:
 		pdfFile = 'bok_gain_vals.pdf'
 	plt.ioff()
 	if gainDat is None:
-		gainDat = all_gain_vals(diagdir,obsDb)
+		gainDat = all_gain_vals(diagdir,obsDb,utDates=utDates)
 	gainDat = gainDat.group_by('utDate')
 	with PdfPages(pdfFile) as pdf:
 		for kdat,gdat in zip(gainDat.groups.keys,gainDat.groups):
-			plot_gain_vals(gdat,raw=raw)
+			print 'plotting gains for ',kdat['utDate']
+			plot_gain_vals(gdat,raw=raw,debug=debug)
 			plt.title('%s'%kdat['utDate'])
 			pdf.savefig()
 			plt.close()
 	plt.ion()
 
-def calc_sky_backgrounds(dataMap,outputFile):
+def calc_sky_backgrounds(dataMap,outputFile,redo=False):
 	extns = ['IM4']
-	imstat = BokImStat(extensions=extns,quickprocess=True,
+	imstat = BokImStatWithPreProcessing(extensions=extns,
 	                   stats_region='amp_central_quadrant',stats_stride=8)
 	skyvals = []
 	files,ii = dataMap.getFiles(imType='object',includebad=True,
 	                            with_frames=True)
+	if os.path.exists(outputFile) and not redo:
+		oldTab = Table.read(outputFile)
+		inOld = np.in1d(dataMap.obsDb['frameIndex'][ii],oldTab['frameIndex'])
+		files = files[~inOld]
+		ii = ii[~inOld]
+	else:
+		oldTab = None
 	rawfiles = map(dataMap('raw'),files)
 	imstat.process_files(rawfiles)
-	sky = imstat.meanVals[:,0].astype(np.float32)
+	sky = imstat.data['mean'][:,0].astype(np.float32)
 	tab = Table(dict(frameIndex=dataMap.obsDb['frameIndex'][ii],
 	                 utDate=dataMap.obsDb['utDate'][ii],
 	                 fileName=dataMap.obsDb['fileName'][ii],
 	                 filter=dataMap.obsDb['filter'][ii],
 	                 skyMean=sky))
-	tab.write(outputFile)
+	if oldTab is not None:
+		tab = vstack([oldTab,tab])
+	tab.write(outputFile,overwrite=True)
 	logf = open('data/bokrm_skysum.txt','w')
 	tab = Table.read(outputFile)
 	tab = tab.group_by(['utDate','filter'])
@@ -206,6 +204,7 @@ def calc_sky_backgrounds(dataMap,outputFile):
 		logf.write('%8s %3s %4d %10.1f %10.1f %10.1f\n' % \
 		           (k['utDate'],k['filter'],len(g),
 		            sky.mean(),sky.min(),sky.max()))
+	logf.close()
 
 def id_sky_frames(obsDb,skytab,utds,thresh=10000.):
 	frametab = obsDb['frameIndex','utDate','fileName','objName'].copy()
@@ -751,6 +750,10 @@ if __name__=='__main__':
 	                help='factor by which to bin the thumbnail images')
 	parser.add_argument('--old',action='store_true',
 	                help='use old (09/2014) processed images')
+	parser.add_argument('--debug',action='store_true',
+	                help='extra debugging info')
+	parser.add_argument('--rawgains',action='store_true',
+	                help='raw gain correction values')
 	parser.add_argument('--objid',type=int,
 	                help='object number')
 	parser.add_argument('--outfile',type=str,
@@ -773,6 +776,8 @@ if __name__=='__main__':
 		check_bias_ramp(dataMap)
 	if args.checkgains:
 		all_gain_plots(diagdir=dataMap.getDiagDir(),obsDb=dataMap.obsDb,
+		               utDates=dataMap.getUtDates(sciOnly=True),
+		               debug=args.debug,raw=args.rawgains,
 		               pdfFile=args.outfile)
 	if args.cutouts:
 		photCat.load_bok_phot()
