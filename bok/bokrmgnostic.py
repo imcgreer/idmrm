@@ -2,6 +2,7 @@
 
 import os,sys
 import subprocess
+from collections import OrderedDict
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import ticker
@@ -171,10 +172,13 @@ def all_gain_plots(gainDat=None,diagdir=None,obsDb=None,utDates=None,
 			plt.close()
 	plt.ion()
 
-def calc_sky_backgrounds(dataMap,outputFile,redo=False):
+def calc_sky_backgrounds(dataMap,outputFile,redo=False,verbose=1):
 	extns = ['IM4']
-	imstat = BokImStatWithPreProcessing(extensions=extns,
-	                   stats_region='amp_central_quadrant',stats_stride=8)
+	imstat = BokImStatWithPreProcessing(fields=['mean','std'],
+	                                    extensions=extns,
+	                                    stats_region='amp_central_quadrant',
+	                                    stats_stride=8,
+	                                    verbose=verbose)
 	skyvals = []
 	files,ii = dataMap.getFiles(imType='object',includebad=True,
 	                            with_frames=True)
@@ -185,14 +189,18 @@ def calc_sky_backgrounds(dataMap,outputFile,redo=False):
 		ii = ii[~inOld]
 	else:
 		oldTab = None
+	if len(files)==0:
+		print 'no files to process'
+		return
 	rawfiles = map(dataMap('raw'),files)
 	imstat.process_files(rawfiles)
 	sky = imstat.data['mean'][:,0].astype(np.float32)
-	tab = Table(dict(frameIndex=dataMap.obsDb['frameIndex'][ii],
-	                 utDate=dataMap.obsDb['utDate'][ii],
-	                 fileName=dataMap.obsDb['fileName'][ii],
-	                 filter=dataMap.obsDb['filter'][ii],
-	                 skyMean=sky))
+	skyrms = imstat.data['std'][:,0].astype(np.float32)
+	tab = Table(OrderedDict(frameIndex=dataMap.obsDb['frameIndex'][ii],
+	                        utDate=dataMap.obsDb['utDate'][ii],
+	                        fileName=dataMap.obsDb['fileName'][ii],
+	                        filter=dataMap.obsDb['filter'][ii],
+	                        skyMean=sky,skyRms=skyrms))
 	if oldTab is not None:
 		tab = vstack([oldTab,tab])
 	tab.write(outputFile,overwrite=True)
@@ -769,7 +777,7 @@ if __name__=='__main__':
 	if args.checkproc:
 		check_processed_data(dataMap)
 	if args.calcsky:
-		calc_sky_backgrounds(dataMap,args.calcsky)
+		calc_sky_backgrounds(dataMap,args.calcsky,redo=args.redo)
 	if args.metadata:
 		rmobs_meta_data(dataMap)
 	if args.checkramp:
