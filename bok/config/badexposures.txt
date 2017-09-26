@@ -140,3 +140,23 @@ ut20160320/d7467.0100
 ut20160320/d7467.0101           bad read (aborted?)
 ut20160416/d7494.0167           bad sky
 ut20160416/d7494.0168           bad sky
+ut20170203/d7787.0176           out of focus
+ut20170203/d7787.0177           out of focus
+ut20170203/d7787.0178           out of focus
+ut20170203/d7787.0179           out of focus
+ut20170203/d7787.0180           out of focus
+ut20170203/d7787.0181           out of focus
+ut20170203/d7787.0182           out of focus
+ut20170203/d7787.0183           out of focus
+ut20170203/d7787.0184           out of focus
+ut20170203/d7787.0185           out of focus
+ut20170203/d7787.0186           out of focus
+ut20170203/d7787.0187           out of focus
+ut20170203/d7787.0188           out of focus
+ut20170203/d7787.0189           out of focus
+ut20170203/d7787.0190           out of focus
+ut20170203/d7787.0191           out of focus
+ut20170203/d7787.0192           out of focus
+ut20170203/d7787.0193           out of focus
+ut20170203/d7787.0194           out of focus
+ut20170203/d7787.0195           out of focus
