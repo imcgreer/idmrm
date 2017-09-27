@@ -4,6 +4,7 @@ import os
 import glob
 import numpy as np
 from astropy.table import Table,vstack,join
+from astropy.stats import sigma_clip
 
 from bokpipe.badpixels import build_mask_from_flat
 from bokpipe import bokpl,bokobsdb
@@ -125,15 +126,16 @@ def get_observing_season(dataMap):
 	return year[0]
 
 class IllumSelector(object):
-	minNImg = 15
+	minNImg = 10
 	maxNImg = 30
-	skySigThresh = 3.0
 	maxCounts = 20000
 	def __init__(self):
-		self.sky = vstack([Table.read('data/bokrm2014skyg.fits.gz'),
-		                   Table.read('data/bokrm2014skyi.fits.gz')])
+		self.sky = Table.read(os.path.join('data','bokrm_skyadu.fits'))
 	def __call__(self,obsDb,ii):
 		keep = np.ones(len(ii),dtype=bool)
+		if ( np.all(obsDb['utDate'][ii] == '20150405') or
+		     obsDb['utDate'][ii[0]].startswith('2017') ):
+			return self.filtered_selection(obsDb,ii)
 		# this whole night is bad due to passing clouds
 		keep[:] ^= obsDb['utDate'][ii] == '20140612'
 		# repeated images at same pointing center
@@ -145,23 +147,35 @@ class IllumSelector(object):
 		for field in ['rm10','rm11','rm12','rm13']:
 			keep[obsDb['objName'][ii]==field] = False
 		return keep
-		if keep.sum()==0:
-			return keep
+	def filtered_selection(self,obsDb,ii):
 		# filter out bright sky values
-		t = join(obsDb[ii],self.sky,'fileName')
+		t = join(obsDb[ii],self.sky,'frameIndex')
 		if len(t) < len(ii):
 			raise ValueError('missing files!')
-		skyMean = t['skyMean'].mean()
-		skyRms = t['skyMean'].std()
-		jj = t['skyMean'].argsort()
-		nimg = keep[jj].cumsum()
-		jlast = np.where((nimg>self.minNImg) & 
-		            ((t['skyMean'][jj] > skyMean+self.skySigThresh*skyRms) |
-		             (t['skyMean'][jj] > self.maxCounts)))[0]
-		if len(jlast) > 0:
-			keep[jj[jlast:]] = False
-		if keep.sum() > self.maxNImg:
-			keep[jj[nimg>self.maxNImg]] = False
+		#
+		badfield = np.in1d(obsDb['objName'][ii],
+		                   ['rm10','rm11','rm12','rm13'])
+		badfield |= obsDb['fileName'][ii] == 'bokrm.20150405.0059'
+		fvar = t['skyRms']**2/t['skyMean']
+		badrms = sigma_clip(fvar,sigma=3.0,iters=2).mask
+		keep = (t['skyMean'] < self.maxCounts) & ~badrms & ~badfield
+		if keep.sum() < self.minNImg:
+			return ~badrms & ~badfield
+		#
+		grpNum = 0
+		pgrp = [grpNum]
+		for _i in range(1,len(ii)):
+			if obsDb['objName'][ii[_i]] != obsDb['objName'][ii[_i-1]]:
+				grpNum += 1
+			pgrp.append(grpNum)
+		pgrp = np.array(pgrp)
+		#
+		jj = np.where(keep)[0]
+		keep[jj] = False
+		jj2 = t['skyMean'][jj].argsort()[:self.maxNImg*2]
+		_,jj3 = np.unique(pgrp[jj[jj2]],return_index=True)
+		jj4 = t['skyMean'][jj[jj2[jj3]]].argsort()[:self.maxNImg]
+		keep[jj[jj2[jj3[jj4]]]] = True
 		return keep
 
 class SkyFlatSelector2014(object):
