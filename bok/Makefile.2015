@@ -1,6 +1,6 @@
 #!/usr/bin/make
 
-all_detrend2015: initproc biasramp badpix proc1 flats proc2
+all_detrend15: initproc biasramp badpix proc1 makeillum illum07i flats proc2
 
 include Makefile
 
@@ -23,4 +23,9 @@ flats15:
 	for utd in 201501 201502 201503 201504 2015050 2015052 201507; do \
 		make -f Makefile flats UTDATE=$$utd; \
 	done
+
+illum07i:
+	make -f Makefile makeillum UTDATE=201507 BANDS=i \
+	     XARGS="--masterillum --min_illum_images 0"
+#	     XARGS="--masterillum --min_illum_images 0 --illum_nknots2 11"
 

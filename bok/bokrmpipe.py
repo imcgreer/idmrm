@@ -134,6 +134,7 @@ class IllumSelector(object):
 	def __call__(self,obsDb,ii):
 		keep = np.ones(len(ii),dtype=bool)
 		if ( np.all(obsDb['utDate'][ii] == '20150405') or
+		     obsDb['utDate'][ii[0]].startswith('201507') or
 		     obsDb['utDate'][ii[0]].startswith('2017') ):
 			return self.filtered_selection(obsDb,ii)
 		# this whole night is bad due to passing clouds
