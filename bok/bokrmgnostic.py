@@ -12,6 +12,7 @@ from astropy.wcs import WCS
 from astropy.table import Table,join,vstack
 from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
+from astropy.time import Time
 
 from bokpipe import bokphot,bokpl,bokgnostic
 from bokpipe.bokproc import ampOrder,BokCalcGainBalanceFactors, \
@@ -286,6 +287,93 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		               sep=sep))
 	return rv
 
+def add_photometric_flag(zpTab,obsDb,nIter=3,minContig=10,
+                         savefit=False,doplot=False):
+	zpTab = join(zpTab,obsDb['frameIndex','filter','mjdStart','airmass'],
+	             'frameIndex')
+	zpTab.sort('mjdStart')
+	# first group by season
+	zpTab['season'] = [ utd[:4] for utd in zpTab['utDate'] ]
+	zpTab['season'][zpTab['season']=='2013'] = '2014'
+	zpTab = zpTab.group_by(['season','filter'])
+	zpTab['meanAperZp'] = zpTab['aperZp'].mean(axis=1)
+	zpTab['isPhoto'] = False
+	if doplot:
+		fig,pnum = {},{'g':1,'i':1}
+		for b in 'gi':
+			fig[b] = plt.figure(figsize=(9,6))
+			fig[b].subplots_adjust(0.06,0.08,0.99,0.99,0.2,0.2)
+	if savefit:
+		outf = open('data/zpvstime.dat','w')
+		outf.write('# season filt mjd0 zp0 a_zp\n')
+	for (season,filt),sdat in zip(zpTab.groups.keys,zpTab.groups):
+		# correct the zeropoints for nominal atmospheric extinction
+		meanZp = sdat['meanAperZp'] + 0.17*(sdat['airmass']-1.0)
+		# and set the starting point to be day 0 of the season
+		day0 = Time(season+'-01-01T00:00:00',format='isot',scale='utc')
+		dMjd = sdat['mjdStart'] - day0.mjd
+		# guess that the "true" zeropoint is around the 90th percentile
+		# of the measured zeropoints
+		zp90 = np.percentile(meanZp,90)
+		# and mask obviously non-photometric data
+		msk = zp90 - meanZp > 0.25
+		# then iteratively fit a line to the zeropoints allow variation 
+		# with time, rejecting low outliers at each iteration
+		for iterNum in range(nIter):
+			zpFit = np.polyfit(dMjd[~msk]/100,meanZp[~msk],1)
+			resid = np.polyval(zpFit,dMjd/100) - meanZp
+			msk |= resid > 0.1
+		# now search for continguous images within 10% of fitted zeropoint
+		ncontig = np.zeros(len(msk),dtype=int)
+		for utd in np.unique(sdat['utDate']):
+			jj = np.where(sdat['utDate']==utd)[0]
+			if not np.any(msk[jj]):
+				# the whole night was photometric
+				ncontig[jj] = len(jj)
+				continue
+			i1 = 0
+			for i2 in np.where(msk[jj])[0]:
+				ncontig[jj[i1:i2]] = i2 - i1
+				i1 = i2 + 1
+			ncontig[jj[i1:]] = len(jj) - i1
+		cmsk = (ncontig < minContig) & ~msk
+		msk |= ncontig < minContig
+		print '%s %s %d/%d photometric' % (season,filt,np.sum(~msk),len(msk))
+		sdat['isPhoto'][~msk] = True
+		if savefit:
+			outf.write('%s %s %.4f %.4f %.4f\n' % 
+			           (season,filt,day0.mjd,zpFit[1],zpFit[0]))
+		if doplot:
+			ax = fig[filt].add_subplot(4,1,pnum[filt])
+			ii = np.where(meanZp > 25)[0]
+			ax.scatter(dMjd[ii],meanZp[ii],
+			           marker='+',c=np.choose(msk[ii],['C0','C1']))
+			jj = np.where(cmsk[ii])[0]
+			ax.scatter(dMjd[ii[jj]],meanZp[ii[jj]],
+			           marker='o',edgecolors='C5',s=50,facecolors='none')
+			minZp = {'g':25,'i':24.5}[filt]
+			ii = np.where(meanZp < minZp)[0]
+			ax.scatter(dMjd[ii],np.repeat(minZp,len(ii)),
+			           marker='v',c='C1')
+			ax.plot(dMjd,np.polyval(zpFit,dMjd/100),c='C2')
+			#ax.axhline(zp90,c='gray',ls='--')
+			ax.set_ylim(minZp-0.05,meanZp[~msk].max()+0.2)
+			ax.set_xlim(min(dMjd.min(),0)-3,dMjd.max()+3)
+			t = ax.text(0.03,0.1,'%s-%s    %.2f + %.2f(day/100)' % 
+			            (season,filt,zpFit[1],zpFit[0]),
+			            size=11,transform=ax.transAxes)
+			t.set_bbox(dict(facecolor='w',alpha=0.7,edgecolor='none'))
+			ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+			ax.grid(True,'major','y')
+			ax.grid(True,'minor','y',linestyle='--')
+			pnum[filt] += 1
+	if savefit:
+		outf.close()
+	if doplot:
+		for f in fig.values():
+			f.text(0.5,0.01,'day since start of season',ha='center')
+	return zpTab
+
 def rmobs_meta_data(dataMap):
 	tabf = 'data/BokRMFrameList.fits'
 	bokgnostic.obs_meta_data(dataMap,outFile=tabf)
@@ -326,7 +414,7 @@ def dump_data_summary(dataMap,splitrm=False):
 
 def check_processed_data(dataMap):
 	import fitsio
-	sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
+	#sdss = fits.getdata(os.environ['BOK90PRIMEDIR']+'/../data/sdss.fits',1)
 	gaia = fits.getdata(os.environ['BOK90PRIMEOUTDIR'] +
 	                    '/scamp_refs_gaia/gaia_sdssrm.fits',1)
 	try:
