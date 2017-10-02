@@ -1,6 +1,8 @@
 # bokrm
 Bok 90Prime data for the SDSS-RM project
 
+See additional documentation on the [wiki](https://github.com/imcgreer/idmrm/wiki).
+
 ### Examples of using Makefiles to run processing steps
 
 First build a log of observations:
