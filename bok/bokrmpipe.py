@@ -83,6 +83,8 @@ def make_obs_db(args):
 	# and apply fixes to header values
 	with open('config/badheaders.txt') as badhf:
 		for l in badhf:
+			if l.startswith('#'):
+				continue
 			fn,dat = l.strip().split()
 			i = np.where(files==fn)[0][0]
 			for card in dat.split(','):
