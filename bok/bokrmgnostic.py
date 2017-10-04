@@ -13,6 +13,7 @@ from astropy.table import Table,join,vstack
 from astropy.stats import sigma_clip
 from astropy.nddata import block_reduce
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
 
 from bokpipe import bokphot,bokpl,bokgnostic
 from bokpipe.bokproc import ampOrder,BokCalcGainBalanceFactors, \
@@ -380,6 +381,7 @@ def rmobs_meta_data(dataMap):
 	tab = Table.read(tabf)
 	for b in 'g':
 		zpdat = Table.read('bokrm_zeropoints.fits')
+		zpdat = add_photometric_flag(zpdat,dataMap.obsDb)
 		del zpdat['utDate']
 		tab = join(tab,zpdat,'frameIndex','left')
 	tab.write(tabf,overwrite=True)
@@ -419,6 +421,9 @@ def check_processed_data(dataMap):
 	                    '/scamp_refs_gaia/gaia_sdssrm.fits',1)
 	try:
 		zeropoints = fits.getdata('bokrm_zeropoints.fits')
+		zeropoints = add_photometric_flag(zeropoints,dataMap.obsDb)
+		zptrend = Table.read('data/zpvstime.dat',format='ascii')
+		zptrend['season'] = zptrend['season'].astype(str)
 	except IOError:
 		zeropoints = None
 	tabf = open(os.path.join('proc_diag.html'),'w')
@@ -450,16 +455,20 @@ def check_processed_data(dataMap):
 		try:
 			zpi = np.where(dataMap.obsDb['frameIndex'][i] ==
 			                                zeropoints['frameIndex'])[0][0]
+			_j = np.where((zptrend['season']==zeropoints['season'][zpi]) &
+			           (zptrend['filt']==dataMap.obsDb['filter'][i]))[0][0]
+			dMjd = dataMap.obsDb['mjdStart'][i] - zptrend['mjd0'][_j]
+			nomzp = zptrend['zp0'][_j] + zptrend['a_zp'][_j]*(dMjd/100)
 		except:
 			zpi = None
 		for ccdi in range(4):
 			if zpi is not None:
 				zp = zeropoints['aperZp'][zpi,ccdi]
-				if zp > bokrmphot.zp_phot_nominal[filt]:
+				if zp > nomzp - 0.2:
 					status = 'nominal'
-				elif zp > bokrmphot.zp_phot_nominal[filt]-0.2:
+				elif zp > nomzp - 1.0:
 					status = 'warning'
-				elif zp > bokrmphot.zp_phot_nominal[filt]-0.5:
+				elif zp > nomzp - 2.0:
 					status = 'bad'
 				else:
 					status = 'weird'
@@ -468,7 +477,7 @@ def check_processed_data(dataMap):
 				nstar = zeropoints['psfNstar'][zpi,ccdi]
 				if nstar < 20:
 					status2 = 'bad'
-				elif nstar < 100:
+				elif nstar < {'g':100,'i':70}[dataMap.obsDb['filter'][i]]:
 					status2 = 'warning'
 				else:
 					status2 = 'nominal'
@@ -503,6 +512,46 @@ def check_processed_data(dataMap):
 		tabf.flush()
 	tabf.write(bokgnostic.html_diag_foot)
 	tabf.close()
+
+def check_pointing_err(obsDb,doplot=True):
+	dbf = ['frameIndex','utDir','fileName','objName','targetRa','targetDec']
+	tabf = 'data/BokRMFrameList.fits'
+	frameTab = Table.read(tabf)
+	frameTab = join(frameTab,obsDb[dbf],'frameIndex')
+	fc = bokrmpipe.load_field_centers()
+	isfield = np.in1d(frameTab['objName'],fc.keys())
+	print 'dropped: ',list(np.unique(frameTab['objName'][~isfield]))
+	frameTab = frameTab[isfield]
+	fieldPos = np.array([ fc[name] for name in frameTab['objName'] ])
+	fieldPos = SkyCoord(fieldPos,unit="deg")
+	ptngCntr = SkyCoord(frameTab['raCenter'],frameTab['decCenter'],
+	                    unit="deg")
+	sep = fieldPos.separation(ptngCntr)
+	dra,ddec = fieldPos.spherical_offsets_to(ptngCntr)
+	frameTab['pointingErr'] = sep.to('arcsec')
+	frameTab['raErr'] = dra.to('arcsec')
+	frameTab['decErr'] = ddec.to('arcsec')
+	ftSeason = frameTab.group_by('season')
+	for season,fts in zip(ftSeason.groups.keys['season'],ftSeason.groups):
+		cRaErr = sigma_clip(fts['raErr'],sigma=5.0,iters=1)
+		cDecErr = sigma_clip(fts['decErr'],sigma=5.0,iters=1)
+		print '%s: ra = %4.1f +/- %3.1f, dec = %4.1f +/- %3.1f' % \
+		     (season,cRaErr.mean(),cRaErr.std(),cDecErr.mean(),cDecErr.std())
+	if doplot:
+		plt.figure(figsize=(9,4))
+		ax = plt.subplot(121)
+		for season,fts in zip(ftSeason.groups.keys['season'],ftSeason.groups):
+			plt.scatter(fts['raErr'],fts['decErr'],
+			            s=25,alpha=0.4,label=season)
+		plt.xlim(-150,150)
+		plt.ylim(-150,150)
+		ax.grid()
+		plt.legend()
+		plt.subplot(122)
+		for season,fts in zip(ftSeason.groups.keys['season'],ftSeason.groups):
+			plt.hist(fts['pointingErr'],20,(0,100),label=season,
+			         alpha=0.5,normed=True)#histtype='step'
+	return frameTab
 
 # list of flats that get missed by the search below but are needed to have
 # a full set for each run
