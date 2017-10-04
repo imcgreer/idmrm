@@ -36,9 +36,12 @@ def load_field_centers():
 	return fieldcenters
 
 def build_headerfix_dict():
+	fc = load_field_centers()
 	hdrfix = {}
 	with open('config/badheaders.txt') as badhf:
 		for l in badhf:
+			if l.startswith('#'):
+				continue
 			fn,dat = l.strip().split()
 			keyvals = {}
 			for card in dat.split(','):
@@ -47,6 +50,15 @@ def build_headerfix_dict():
 					keyvals[k] = float(v)
 				else:
 					keyvals[k] = v
+			# if changing the pointing name but updated coordinates 
+			# aren't provided, take them from the default field centers
+			if 'OBJECT' in keyvals and not 'CRVAL1' in keyvals:
+				try:
+					ra,dec = fc[keyvals]['OBJECT']
+					keyvals['CRVAL1'] = dec
+					keyvals['CRVAL2'] = ra
+				except:
+					pass
 			flist = [ (0, { k:v for k,v in keyvals.items() 
 			                      if not k.startswith('CRVAL')} )]
 			for j in range(1,17):
