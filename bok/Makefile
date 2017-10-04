@@ -142,6 +142,11 @@ wcs:
 catalogs:
 	$(BOKRMPIPE) $(INITARGS) -s cat $(XARGS)
 
+# Redo all processing, WCS, and catalogs from scratch
+redo:
+	make procall wcs catalogs \
+	     INITARGS="$(INITARGS)" PROCARGS="$(PROCARGS)" XARGS="-R $(XARGS)"
+
 
 # Generate aperture photometry catalogs for RM targets
 aperphot_rm:
@@ -183,10 +188,6 @@ aggregate_sdss:
 update_metadata:
 	$(BOKRMPHOT) $(INITARGS) --updatemeta $(XARGS) --catalog sdss
 
-
-# Redo all processing, WCS, and catalogs from scratch
-redo:
-	make XARGS="-R $(XARGS)" procall wcs catalogs aperphot
 
 rebuild_caldb: makeillum flats_makefringe flats_makeskyflat
 
