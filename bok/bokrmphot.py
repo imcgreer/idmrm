@@ -489,10 +489,10 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 	psfZps = np.zeros_like(aperZps)
 	psfNstar = np.zeros_like(aperNstar)
 	for n,(f,i) in enumerate(zip(files,frames)):
-		frameId =  dataMap.obsDb['frameIndex'][i]
+		frameId = dataMap.obsDb['frameIndex'][i]
 		ii = np.where(aperCat['frameIndex']==frameId)[0]
 		if len(ii)==0:
-			print 'no data for frame ',f
+			print 'WARNING: no data for frame ',f
 			continue
 		xCat = fits.open(dataMap('cat')(f))
 		for ccd in range(1,5):
