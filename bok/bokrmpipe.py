@@ -102,6 +102,10 @@ def make_obs_db(args):
 			for card in dat.split(','):
 				k,v = card.split('=')
 				obsDb[hdr2tab[k]][i] = v
+	# these frames were missing WCS, setting airmass by hand
+	obsDb['airmass'][obsDb['fileName']=='d7960.0053'] = 1.874
+	obsDb['airmass'][obsDb['fileName']=='d7960.0054'] = 1.914
+	obsDb['airmass'][obsDb['fileName']=='d7960.0055'] = 1.957
 	# and now restrict to only RM observations
 	iszero = obsDb['imType']=='zero'
 	isflat = ( (obsDb['imType']=='flat') & 
