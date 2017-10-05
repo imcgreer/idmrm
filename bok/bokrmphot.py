@@ -18,8 +18,16 @@ zp_phot_nominal = {'g':25.90,'i':25.40}
 bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
 seasonMjdRange = {'2014':(56600,56900),'2015':(57000,57250),
-                  '2016':(57000,57600)}
+                  '2016':(57000,57600),'2017':(57770,57970)}
 
+
+def phot_file_names(fileType,*args):
+	if fileType=='sephot':
+		return '%s_%s_sephot%s.fits' % args
+	elif fileType=='coaddphot':
+		return '%s_%s_coaddphot%s.fits' % args
+	else:
+		raise ValueError
 
 ##############################################################################
 #
@@ -62,6 +70,7 @@ class RmPhotCatalog(object):
 			self.bokPhot[c].mask |= mask
 	def load_bok_phot(self,nogroup=False,season=None):
 		try:
+			print 'loading ',self.bokPhotFn
 			self.bokPhot = Table(Table.read(self.bokPhotFn),masked=True)
 		except IOError:
 			return None
@@ -601,7 +610,7 @@ def _read_old_catf(obsDb,catf):
 	                 'ccdNum','frameIndex'))
 	return t
 
-def stack_catalogs(dataMap,photCat,old=False):
+def stack_catalogs(dataMap,photCat,season=None,old=False):
 	pfx = photCat.name
 	if old:
 		# renaming
@@ -612,6 +621,10 @@ def stack_catalogs(dataMap,photCat,old=False):
 		pfx = pfx+'_aper'
 	allTabs = []
 	for utd in dataMap.iterUtDates():
+		if ( season is not None and
+		      not ( utd.startswith(season) or 
+		              (utd.startswith('2013') and season=='2014') ) ):
+			continue
 		print 'loading catalogs from ',utd
 		for filt in dataMap.iterFilters():
 			if old and utd=='20131223':
@@ -632,9 +645,10 @@ def stack_catalogs(dataMap,photCat,old=False):
 	return tab
 
 def calibrate_lightcurves(photCat,dataMap,minNstar=30,
-                          zpFile='bokrm_zeropoints.fits',old=False):
+                          zpFile='bokrm_zeropoints.fits',
+	                      season=None,old=False):
 	if photCat.bokPhot is None:
-		tab = stack_catalogs(dataMap,photCat,old=old)
+		tab = stack_catalogs(dataMap,photCat,season=season,old=old)
 	else:
 		tab = photCat.bokPhot
 	zpDat = Table.read(zpFile)
@@ -816,7 +830,7 @@ def aggregate_phot_nightly(phot,**kwargs):
 	phot = phot.group_by(['objId','filter','mjdInt'])
 	return calc_aggregate_phot(phot,**kwargs)
 
-def aggregate_phot(photCat,which,aperNum=2,**kwargs):
+def aggregate_phot(photCat,which,aperNum=2,outName='',**kwargs):
 	photCat.apply_flag_mask()
 	phot = photCat.get_aperture_table(aperNum)
 	if which=='all':
@@ -824,10 +838,10 @@ def aggregate_phot(photCat,which,aperNum=2,**kwargs):
 	elif which=='nightly':
 		phot,aggPhot = aggregate_phot_nightly(phot,**kwargs)
 	# XXX why aren't masks carrying through here?
-	phot.write('photsum_%s_%s.fits' % (photCat.name,which),
-	           overwrite=True)
-	aggPhot.write('agg_phot_%s_%s.fits' % (photCat.name,which),
-	              overwrite=True)
+	photFile = phot_file_names('sephot',photCat.name,which,outName)
+	aggFile = phot_file_names('coaddphot',photCat.name,which,outName)
+	phot.write(photFile,overwrite=True)
+	aggPhot.write(aggFile,overwrite=True)
 
 aperPhotKeys = [ 'aper'+k1+k2 for k1 in ['Mag','Flux'] 
                                 for k2 in ['','Err','Ivar'] ]
@@ -845,8 +859,9 @@ def load_agg_phot(aggPhotFn,minErr=1e-2):
 
 def binned_phot_stats(which='cleanstars',**kwargs):
 	season = kwargs.pop('season','2014')
+	catdir = kwargs.pop('catdir','.')
 	if which=='cleanstars':
-		phot = CleanSdssStarCatalog()
+		phot = CleanSdssStarCatalog(catdir=catdir)
 	elif which=='allstars':
 		phot = SdssStarCatalog(catdir='archive/run2data/')
 	elif which=='Jan2017':
@@ -983,8 +998,10 @@ if __name__=='__main__':
 	                help='directory containing photometry catalogs')
 	parser.add_argument('--nowrite',action='store_true',
 	                help='skip writing output files')
-#	parser.add_argument('--outfile',type=str,
-#	                help='output file')
+	parser.add_argument('--season',type=str,
+	                help='observing season')
+	parser.add_argument('--outfile',type=str,
+	                help='output file')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -1006,18 +1023,18 @@ if __name__=='__main__':
 		timerLog('zeropoints')
 	if args.lightcurves:
 		photCat.load_bok_phot(nogroup=True)
-		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,old=args.old)
+		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,
+		                      season=args.season,old=args.old)
 		timerLog('lightcurves')
 	if args.aggregate:
-		photCat.load_bok_phot(nogroup=True)
+		photCat.load_bok_phot(nogroup=True,season=args.season)
 		which = 'nightly' if args.nightly else 'all'
-		aggregate_phot(photCat,which)#,**kwargs)
+		aggregate_phot(photCat,which,outName=args.outfile)#,**kwargs)
 #	elif args.nightly:
 #		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('aggregate phot')
 	if args.updatemeta:
-		# XXX clean up direct filename refs here
-		psum = load_agg_phot('photsum_sdssrefstars_all.fits')
+		psum = load_agg_phot(phot_file_names('sephot','sdss','all'))
 		frameStats,objStats = calc_frame_stats(psum)
 		update_framelist_withoutliers(frameStats)
 		write_object_badlist(objStats,frameStats,'sdssPhotSummary.fits')
