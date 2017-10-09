@@ -84,7 +84,7 @@ class RmPhotCatalog(object):
 		mask = self.bokPhot['aperFlux'] == 0
 		self.bokPhot['aperFlux'].mask |= mask
 		self.bokPhot['aperFluxErr'].mask |= mask
-		mask = ( self.bokPhot['aperMag'] > 90 | 
+		mask = ( np.ma.greater(self.bokPhot['aperMag'],90) | 
 		         np.isnan(self.bokPhot['aperMag']) )
 		self.bokPhot['aperMag'].mask |= mask
 		self.bokPhot['aperMagErr'].mask |= mask

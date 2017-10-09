@@ -68,7 +68,7 @@ def plot_lightcurve(lcTab,targetNum,aperNum=1,refCat=None,
 	if refCat is not None:
 		_j = np.where(refCat['objId']==targetNum)[0][0]
 	gkeys = lcTab.groups.keys
-	if gkeys.colnames == ['objId']:
+	if gkeys is not None and gkeys.colnames == ['objId']:
 		j = np.where(lcTab.groups.keys['objId']==targetNum)[0][0]
 		lc = lcTab.groups[j].group_by('filter')
 	elif gkeys is None or gkeys.colnames == ['objId','filter']:
