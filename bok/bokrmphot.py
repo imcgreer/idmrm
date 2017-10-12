@@ -18,7 +18,7 @@ zp_phot_nominal = {'g':25.90,'i':25.40}
 bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
 seasonMjdRange = {'2014':(56600,56900),'2015':(57000,57250),
-                  '2016':(57000,57600),'2017':(57770,57970)}
+                  '2016':(57000,57600),'2017':(57770,58000)}
 
 
 def phot_file_names(fileType,*args):
@@ -143,37 +143,42 @@ class SdssStarCatalog(RmPhotCatalog):
 		            np.in1d(phot['objId'],refCat['objId']) ]
 		objGroup = phot.group_by('objId')
 		#
-		n = np.array([(~g['aperMag'].mask).sum() for g in objGroup.groups])
+		minNobs = 10
+		def min_nobs(table,key_colnames):
+			return np.sum(~table['aperMag'].mask) > minNobs
+		objGroup = objGroup.groups.filter(min_nobs)
+		#
 		ii = map_group_to_items(objGroup)
-		phot['n'] = n[ii]
-		phot = phot[phot['n']>10]
-		objGroup = phot.group_by('objId')
+		nClipIter = 3
+		sigThresh = 5.0
+		mask = objGroup['aperMag'].mask.copy()
+		objGroup['n'] = ~mask
+		print 'before iter: ',np.sum(~mask)
+		for iterNum in range(nClipIter):
+			mean_mag,rms_mag = calc_mean_mags(objGroup,median=True,
+			                                  extMask=mask)
+			dmag = objGroup['aperMag'] - mean_mag[ii]
+			nsig = dmag / rms_mag[ii]
+			print 'max deviation: ',np.ma.abs(nsig[~mask]).max()
+			if iterNum < nClipIter-1:
+				mask[:] |= np.ma.greater(np.ma.abs(nsig),sigThresh)
+				print 'after iter: ',iterNum+1,np.sum(~mask)
+		objGroup['nClip'] = ~mask
 		#
 		aggPhot = join_by_objid(objGroup.groups.keys,refCat)
-		ii = map_group_to_items(objGroup)
-		mean_mag,rms_mag = calc_mean_mags(objGroup,median=True)
 		aggPhot['meanMag'] = mean_mag
 		aggPhot['rmsInt'] = rms_mag
 		objGroup['dmagExt'] = objGroup['aperMag'] - aggPhot[band][ii]
-		objGroup['dmagInt'] = objGroup['aperMag'] - mean_mag[ii]
-		dev = np.ma.divide(objGroup['dmagInt'],rms_mag[ii])
-		objGroup['outlier'] =  np.ma.greater(dev,5.0)
-		objGroup['n'] = ~dev.mask
-		objGroup['dmagIntClip'] = objGroup['dmagInt'].copy()
-		objGroup['dmagIntClip'].mask |= objGroup['outlier']
-		aggPhot['rmsIntClip'] = objGroup['dmagIntClip'].groups.aggregate(
-		                                                           np.ma.std)
-		outies = objGroup['outlier','n'].groups.aggregate(np.ma.sum)
-		aggPhot['outlierFrac'] = outies['outlier']/outies['n'].astype(float)
+		objGroup['dmagInt'] = dmag
+		outies = objGroup['n','nClip'].groups.aggregate(np.ma.sum)
+		aggPhot['outlierFrac'] = 1-outies['nClip']/outies['n'].astype(float)
 		binAggPhot = aggPhot.group_by('binNum')
 		binGroup = Table(binAggPhot.groups.keys)
 		binGroup['mbins'] = mbins
 		perc = lambda x,p: np.percentile(x.compressed(),p)
 		for p in [25,50,75]:
-			for s in ['','Clip']:
-				pc = binAggPhot['rmsInt'+s].groups.aggregate(
-				                                     lambda x: perc(x,p))
-				binGroup['sig%d%s'%(p,s)] = pc
+			pc = binAggPhot['rmsInt'].groups.aggregate(lambda x: perc(x,p))
+			binGroup['sig%d'%(p)] = pc
 		binGroup['outlierFrac'] = binAggPhot['outlierFrac'].groups.aggregate(
 		                                                        np.ma.mean)
 		# external accuracy in mag bins
@@ -531,19 +536,25 @@ def zp_worker(dataMap,aperCatDir,sdss,pfx,magRange,aperNum,inp):
 				aperNstar[n,ccd-1] = len(dMag.compressed())
 				aperZps[n,ccd-1] = zp
 				aperZpRms[n,ccd-1] = 1.0856 / wsd #* ivar**-0.5
+		if True:
+			if True:
 				# now aperture corrections
-				mask = ( (aperCat['counts'][ii[c]]<=0) |
-				         (aperCat['flags'][ii[c]]>0) |
-				         ~is_mag[aperCat['objId'][ii[c]]][:,np.newaxis] )
+				mask = ( (aperCat['counts'][ii]<=0) |
+				         (aperCat['flags'][ii]>0) |
+				         ~is_mag[aperCat['objId'][ii]][:,np.newaxis] )
 				counts = np.ma.masked_array(
-				            aperCat['counts'][ii[c]],mask=mask)
+				            aperCat['counts'][ii],mask=mask)
+				snr = counts / aperCat['countsErr'][ii]
+				counts[snr<30] = np.ma.masked
 				fratio = np.ma.divide(counts,counts[:,-1][:,np.newaxis])
 				fratio = np.ma.masked_outside(fratio,0,1.5)
 				fratio = sigma_clip(fratio,axis=0)
 				invfratio = np.ma.power(fratio,-1)
-				aperCorrs[n,:,ccd-1] = invfratio.mean(axis=0).filled(0)
+				aperCorrs[n] = invfratio.mean(axis=0).filled(0)[:,np.newaxis]
+				aperZps[n] += 2.5*np.log10(aperCorrs[n,aperNum])
 			else:
 				print 'WARNING: only %d stars for %s[%d]' % (nstar,f,ccd)
+		if False:
 			# then for the sextractor PSF mags
 			m1,m2,s = srcor(xCat[ccd].data['ALPHA_J2000'],
 			                xCat[ccd].data['DELTA_J2000'],
@@ -760,7 +771,7 @@ def map_group_to_items(tab):
 	                                        tab.groups.indices[1:])) ] )
 
 def calc_mean_mags(phot,magkey='aperMag',ivarkey='aperMagIvar',
-                   rms=True,median=False):
+                   rms=True,median=False,minErr=None,extMask=None):
 	'''Given a grouped table and keys for the columns containing 
 	   magnitudes and inverse variances of the magnitudes, calculate
 	   the inverse-variance weighted mean fluxes/magnitudes.
@@ -768,16 +779,35 @@ def calc_mean_mags(phot,magkey='aperMag',ivarkey='aperMagIvar',
 	   Also return the scatter in the magnitudes if rms=True.
 	'''
 	if median:
-		mean_mag = phot[magkey].groups.aggregate(np.ma.median)
+		if extMask is None:
+			mean_mag = phot[magkey].groups.aggregate(np.ma.median)
+		else:
+			phot['_mag'] = phot[magkey].copy()
+			phot['_mag'].mask[:] |= extMask
+			mean_mag = phot['_mag'].groups.aggregate(np.ma.median)
+			if not rms:
+				del phot['_mag']
 	else:
-		phot['wtmag'] = phot[magkey] * phot[ivarkey]
-		aggphot = phot['wtmag',ivarkey].groups.aggregate(np.ma.sum)
-		mean_mag = aggphot['wtmag'] / aggphot[ivarkey]
+		phot['_ivar'] = phot[ivarkey].copy()
+		if minErr is not None:
+			phot['_ivar'][:] = phot['_ivar'].clip(0,minErr**-2)
+		phot['wtmag'] = phot[magkey] * phot['_ivar']
+		if extMask is not None:
+			phot['wtmag'].mask[:] |= extMask
+		aggphot = phot['wtmag','_ivar'].groups.aggregate(np.ma.sum)
+		mean_mag = aggphot['wtmag'] / aggphot['_ivar']
 		del phot['wtmag']
 	if not rms:
 		return mean_mag
 	else:
-		photrms = phot[magkey].groups.aggregate(np.ma.std)
+		if extMask is None:
+			photrms = phot[magkey].groups.aggregate(np.ma.std)
+		else:
+			if '_mag' not in phot.colnames:
+				phot['_mag'] = phot[magkey].copy()
+				phot['_mag'].mask[:] |= extMask
+			photrms = phot['_mag'].groups.aggregate(np.ma.std)
+			del phot['_mag']
 		return mean_mag,photrms
 
 def calc_aggregate_phot(phot,clip=True,sigma=3.0,iters=3):
