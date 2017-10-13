@@ -860,7 +860,7 @@ def aggregate_phot_nightly(phot,**kwargs):
 	phot = phot.group_by(['objId','filter','mjdInt'])
 	return calc_aggregate_phot(phot,**kwargs)
 
-def aggregate_phot(photCat,which,aperNum=2,outName='',**kwargs):
+def aggregate_phot(photCat,which,aperNum=2,catDir='.',outName='',**kwargs):
 	photCat.apply_flag_mask()
 	phot = photCat.get_aperture_table(aperNum)
 	if which=='all':
@@ -870,8 +870,8 @@ def aggregate_phot(photCat,which,aperNum=2,outName='',**kwargs):
 	# XXX why aren't masks carrying through here?
 	photFile = phot_file_names('sephot',photCat.name,which,outName)
 	aggFile = phot_file_names('coaddphot',photCat.name,which,outName)
-	phot.write(photFile,overwrite=True)
-	aggPhot.write(aggFile,overwrite=True)
+	phot.write(os.path.join(catDir,photFile),overwrite=True)
+	aggPhot.write(os.path.join(catDir,aggFile),overwrite=True)
 
 aperPhotKeys = [ 'aper'+k1+k2 for k1 in ['Mag','Flux'] 
                                 for k2 in ['','Err','Ivar'] ]
@@ -880,10 +880,12 @@ def load_agg_phot(aggPhotFn,minErr=1e-2):
 	phot = Table.read(aggPhotFn)
 	# this is to get out of the photon-dominated regime
 	if minErr is not None:
-		phot['n'] &= phot['aperMagErr'] > minErr
+		phot['n'] &= np.ma.greater(phot['aperMagErr'],minErr)
 	# XXX why aren't masks carrying through here?
 	for k in aperPhotKeys+['dmag','chival','chi2']:
 		phot[k].mask |= ~phot['n']
+		phot[k].fill_value = 0.0
+	phot['n'].fill_value = False
 	return phot
 
 
@@ -927,13 +929,21 @@ def identify_bad_frames(frameStats,maxOutlierFrac=0.05):
 
 def calc_group_stats(phot,thresh):
 	pstats = phot['n','chi2'].copy()
-	pstats['outlier'] = np.abs(phot['chival']) > thresh
-	pstats['chi2'].mask |= pstats['outlier']
+	pstats['outlier'] = np.abs(phot['chival'].filled(0)) > thresh
 	gstats = pstats['n','outlier','chi2'].groups.aggregate(np.ma.sum)
+	ii = np.where(np.ma.less_equal(gstats['n'],10))[0]
+	gstats.mask[ii] = True
 	gstats = hstack([pstats.groups.keys,gstats])
-	gstats['outlierFrac'] = gstats['outlier'].astype(float) / gstats['n']
-	ngood = gstats['n'] - gstats['outlier']
-	gstats['rchi2'] = gstats['chi2'] / (ngood-1)
+	gstats['outlierFrac'] = np.ma.divide(gstats['outlier'].astype(np.float32),
+	                                     gstats['n']).astype(np.float32)
+	ngood = np.ma.subtract(gstats['n'],gstats['outlier'])
+	ii = np.where(np.ma.greater(ngood,10) & ~gstats['chi2'].mask)[0]
+	gstats['rchi2'] = np.float32(0)
+	gstats['rchi2'][ii] = np.ma.divide(gstats['chi2'][ii],ngood[ii]-1)
+	# use less storage
+	gstats['n'] = gstats['n'].astype(np.int32)
+	gstats['outlier'] = gstats['outlier'].astype(np.int32)
+	gstats['chi2'] = gstats['chi2'].astype(np.float32)
 	return gstats
 
 def calc_frame_stats(starPhot,fthresh=5.0,othresh=5.0):
@@ -1024,13 +1034,13 @@ if __name__=='__main__':
 	                help='lightcurve table')
 	parser.add_argument('--zptable',type=str,default='bokrm_zeropoints.fits',
 	                help='zeropoints table')
-	parser.add_argument('--catdir',type=str,
+	parser.add_argument('--catdir',type=str,default='.',
 	                help='directory containing photometry catalogs')
 	parser.add_argument('--nowrite',action='store_true',
 	                help='skip writing output files')
 	parser.add_argument('--season',type=str,
 	                help='observing season')
-	parser.add_argument('--outfile',type=str,
+	parser.add_argument('--outfile',type=str,default='',
 	                help='output file')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
@@ -1059,12 +1069,14 @@ if __name__=='__main__':
 	if args.aggregate:
 		photCat.load_bok_phot(nogroup=True,season=args.season)
 		which = 'nightly' if args.nightly else 'all'
-		aggregate_phot(photCat,which,outName=args.outfile)#,**kwargs)
+		aggregate_phot(photCat,which,
+		               catDir=args.catdir,outName=args.outfile)
 #	elif args.nightly:
 #		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('aggregate phot')
 	if args.updatemeta:
-		psum = load_agg_phot(phot_file_names('sephot','sdss','all'))
+		sephotfn = phot_file_names('sephot','sdssrefstars','all',args.outfile)
+		psum = load_agg_phot(os.path.join(args.catdir,sephotfn))
 		frameStats,objStats = calc_frame_stats(psum)
 		update_framelist_withoutliers(frameStats)
 		write_object_badlist(objStats,frameStats,'sdssPhotSummary.fits')
