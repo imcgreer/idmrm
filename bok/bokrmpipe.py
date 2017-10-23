@@ -257,6 +257,12 @@ def config_rm_data(dataMap,args,season=None):
 	dataMap.setCalMap('ramp','master',fileName='BiasRamp%s'%sfx)
 	return dataMap
 
+def quick_load_datamap():
+	obsDbFile = os.path.join(os.environ['BOKRMDIR'],'config',
+	                         'sdssrm-bok.fits.gz')
+	outputDir =  os.path.join(os.environ['BOK90PRIMEOUTDIR'],pipeVersion)
+	return bokpl.quick_init_data_map(obsDbFile,outputDir)
+
 if __name__=='__main__':
 	import sys
 	import argparse
