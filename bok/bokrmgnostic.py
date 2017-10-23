@@ -19,6 +19,7 @@ from bokpipe import bokphot,bokpl,bokgnostic
 from bokpipe.bokproc import ampOrder,BokCalcGainBalanceFactors, \
                             BokImStatWithPreProcessing
 import bokrmpipe
+import idmrmphot
 import bokrmphot
 
 def plot_gain_vals(g,raw=False,debug=False):
@@ -374,17 +375,6 @@ def add_photometric_flag(zpTab,obsDb,nIter=3,minContig=10,
 		for f in fig.values():
 			f.text(0.5,0.01,'day since start of season',ha='center')
 	return zpTab
-
-def rmobs_meta_data(dataMap):
-	tabf = 'data/BokRMFrameList.fits'
-	bokgnostic.obs_meta_data(dataMap,outFile=tabf)
-	tab = Table.read(tabf)
-	for b in 'g':
-		zpdat = Table.read('bokrm_zeropoints.fits')
-		zpdat = add_photometric_flag(zpdat,dataMap.obsDb)
-		del zpdat['utDate']
-		tab = join(tab,zpdat,'frameIndex','left')
-	tab.write(tabf,overwrite=True)
 
 def dump_data_summary(dataMap,splitrm=False):
 	for utd in dataMap.iterUtDates():
@@ -906,9 +896,9 @@ if __name__=='__main__':
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
-	photCat = bokrmphot.load_target_catalog(args.refcatalog,None,
+	photCat = idmrmphot.load_target_catalog(args.refcatalog,None,
 	                                        args.catalog)
-	photCat.load_ref_catalog()
+#	photCat.load_ref_catalog()
 	if args.datasum:
 		dump_data_summary(dataMap)
 	if args.checkproc:
@@ -916,7 +906,7 @@ if __name__=='__main__':
 	if args.calcsky:
 		calc_sky_backgrounds(dataMap,args.calcsky,redo=args.redo)
 	if args.metadata:
-		rmobs_meta_data(dataMap)
+		bokgnostic.obs_meta_data(dataMap,outFile='data/BokRMFrameList.fits')
 	if args.checkramp:
 		check_bias_ramp(dataMap)
 	if args.checkgains:

@@ -159,25 +159,33 @@ bokMaxSeeing = 2.3/0.455
 
 def bok_selfcal(dataMap,refCat,procmap):
 	frameListFile = os.path.join(os.path.join(os.environ['BOKRMDIR'],'data'),
-	                             'BokRMFrameList.fits.gz')
+	                             'BokRMFrameList.fits')#.gz')
 	#
 	frameList = Table.read(frameListFile)
+	frameList.sort('frameIndex')
+	fields = ['frameIndex','utDate','filter','mjdStart','mjdMid','airmass']
+	frameList = idmrmphot.join_by_id(frameList,dataMap.obsDb[fields],
+	                                 'frameIndex')
+	# XXX
+	frameList['season'] = [ utd[:4] for utd in frameList['utDate'] ]
+	frameList['season'][frameList['season']=='2013'] = '2014'
 	#badFrames = identify_bad_frames(frameList)
 	#
 	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)
 	bok7 = idmrmphot.extract_aperture(bokPhot,-2,badFrames=None)
-	if True:
-		del frameList['aperZp','aperZpRms','aperNstar','psfZp','psfNstar',
-		          #'aperCorr','meanAperZp','n','chi2','outlierFrac','rchi2']
-		          'meanAperZp','n','chi2','outlierFrac','rchi2']
+#	if True:
+#		del frameList['aperZp','aperZpRms','aperNstar','psfZp','psfNstar',
+#		          #'aperCorr','meanAperZp','n','chi2','outlierFrac','rchi2']
+#		          'meanAperZp','n','chi2','outlierFrac','rchi2']
 	#
-	sePhot,coaddPhot,zpts = idmrmphot.iter_selfcal(bok7,frameList,refCat,
+	sePhot,coaddPhot,zpts,zptrend = idmrmphot.iter_selfcal(bok7,frameList,refCat,
 	                                          magRange=bokMagRange,
 	                                          maxSeeing=bokMaxSeeing,
 	                                     calColorXform=Sdss2BokTransform())
 	sePhot.write('sephot.fits',overwrite=True)
 	coaddPhot.write('coaddphot.fits',overwrite=True)
 	zpts.write('zpts.fits',overwrite=True)
+	zptrend.write('zptrend.dat',overwrite=True,format='ascii')
 
 
 ##############################################################################

@@ -8,6 +8,7 @@ from astropy.io import fits
 from astropy.table import Table,vstack,hstack,join
 from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
+from astropy.time import Time
 
 k_ext = {'g':0.17,'i':0.06}
 
@@ -206,34 +207,9 @@ def load_target_catalog(target,catdir,photfile):
 	return targets[target]()#catdir=catdir,photfile=photfile)
 
 
-
 ##############################################################################
 #
-# SDSS-RM photometry catalogs (Bok, CFHT, PS1, etc.)
-#
-##############################################################################
-
-def extract_aperture(phot,aperNum,maskBits=None,badFrames=None):
-	# aperture-independent columns
-	gCols = ['frameIndex','objId','ccdNum','nMasked','peakCounts']
-	aphot = Table(phot[gCols].copy(),masked=True)
-	# aperture-dependent columns
-	aCols = ['counts','countsErr','flags']
-	for c in aCols:
-		aphot[c] = phot[c][:,aperNum]
-	# apply masks
-	if not maskBits:
-		maskBits = 2**32 - 1
-	mask = (aphot['flags'] & maskBits) > 0
-	if badFrames is not None:
-		mask[:] |= np.in1d(aphot['frameIndex'],badFrames)
-	for c in ['counts','countsErr']:
-		aphot[c].mask[:] |= mask
-	return aphot
-
-##############################################################################
-#
-# zero points
+# aggregate photometry
 #
 ##############################################################################
 
@@ -277,6 +253,13 @@ def clipped_mean_phot(phot,magKey,ivarKey,sigma=3.0,iters=3,minNobs=10):
 	meanPhot = hstack([phot.groups.keys,meanPhot])
 	return phot,meanPhot
 
+
+##############################################################################
+#
+# zero points
+#
+##############################################################################
+
 # XXX break this up into steps
 
 def selfcal(rawPhot,frameList,refCat,mode='ccd',
@@ -285,12 +268,13 @@ def selfcal(rawPhot,frameList,refCat,mode='ccd',
 	''' mode is 'focalplane','ccd','amp' '''
 	frameList.sort('frameIndex')
 	zp0 = np.float32(25)
-	if mode in ['ccd','amp']:
-		zpGroups = ['ccdNum']
-		if mode == 'amp':
-			zpGroups = ['ampNum']
-	elif mode == 'focalplane':
+	#
+	if mode == 'focalplane':
 		zpGroups = []
+	elif mode == 'ccd':
+		zpGroups = ['ccdNum']
+	elif mode == 'amp':
+		zpGroups = ['ampNum']
 	else:
 		raise ValueError
 	#
@@ -348,11 +332,11 @@ def selfcal(rawPhot,frameList,refCat,mode='ccd',
 	zpPhot = zpPhot.group_by(['frameIndex']+zpGroups)
 	zpPhot,framePhot = clipped_mean_phot(zpPhot,'dMag','magIvar')
 	if mode == 'focalplane':
-		frameList['aperZp'] = zp0 - framePhot['meanMag']
-		frameList['aperZpRms'] = framePhot['rmsMag']
-		frameList['aperNstar'] = framePhot['nObs']
+		frameList['aperZp'] = zp0 - framePhot['meanMag'].filled(zp0)
+		frameList['aperZpRms'] = framePhot['rmsMag'].filled(0)
+		frameList['aperNstar'] = framePhot['nObs'].filled(0)
 	elif mode == 'ccd':
-		nCcd,ccd0 = 4,1
+		nCcd,ccd0 = 4,1 # XXX
 		frameList['aperZp'] = np.zeros((1,nCcd),dtype=np.float32)
 		frameList['aperZpRms'] = np.zeros((1,nCcd),dtype=np.float32)
 		frameList['aperNstar'] = np.zeros((1,nCcd),dtype=np.int32)
@@ -361,9 +345,9 @@ def selfcal(rawPhot,frameList,refCat,mode='ccd',
 		                        framePhot.groups):
 			ccdj = ccdNum - ccd0
 			ii = match_by_id(ccdzp,frameList,'frameIndex')
-			frameList['aperZp'][ii,ccdj] = zp0 - ccdzp['meanMag']
-			frameList['aperZpRms'][ii,ccdj] = ccdzp['rmsMag']
-			frameList['aperNstar'][ii,ccdj] = ccdzp['nObs']
+			frameList['aperZp'][ii,ccdj] = zp0 - ccdzp['meanMag'].filled(zp0)
+			frameList['aperZpRms'][ii,ccdj] = ccdzp['rmsMag'].filled(0)
+			frameList['aperNstar'][ii,ccdj] = ccdzp['nObs'].filled(0)
 	else:
 		raise NotImplementedError
 	# summary statistics
@@ -384,16 +368,64 @@ def selfcal(rawPhot,frameList,refCat,mode='ccd',
 	                                   frameStats['nStar']-1)
 	del frameStats['_ntot']
 	frameStats = hstack([objByFrames.groups.keys,frameStats])
-	frameList = join(frameList,frameStats,'frameIndex','left')
-	for c in ['nStar','chiSqr','outlierFrac','rchi2']:
-		frameList[c].fill_value = 0
-		if c=='nStar':
-			frameList[c] = frameList[c].astype(np.int32)
-		else:
-			frameList[c] = frameList[c].astype(np.float32)
-	frameList = frameList.filled()
+	#
+	ii = match_by_id(frameStats,frameList,'frameIndex')
+	frameList['nStar'] = np.int32(0)
+	frameList['nStar'][ii] = frameStats['nStar'].filled(0)
+	for c in ['chiSqr','outlierFrac','rchi2']:
+		frameList[c] = np.float32(0)
+		frameList[c][ii] = frameStats[c].filled(0)
 	#
 	return zpPhot,objPhot,frameList
+
+def add_photometric_flag(frameList,nIter=3,minContig=10):
+	# resort the table by mjd (frameIndex may not be monotonic with time)
+	zpTab = frameList[frameList['mjdStart'].argsort()]
+	#
+	zp = np.ma.array(zpTab['aperZp'],mask=zpTab['aperZp']==0)
+	if zpTab['aperZp'].ndim > 1:
+		zp = zp.mean(axis=-1)
+	zpTab['_meanzp'] = zp.filled(0)
+	# first group by season
+	zpTab = zpTab.group_by(['season','filter'])
+	zpTrend = Table(names=('season','filter','mjd0','dzpdt','zpt0'),
+	                dtype=('S4','S1','f8','f4','f4'))
+	#
+	for (season,filt),sdat in zip(zpTab.groups.keys,zpTab.groups):
+		meanZp = np.ma.array(sdat['_meanzp'],mask=sdat['_meanzp']==0)
+		# and set the starting point to be day 0 of the season
+		day0 = Time(season+'-01-01T00:00:00',format='isot',scale='utc')
+		dMjd = sdat['mjdStart'] - day0.mjd
+		# guess that the "true" zeropoint is around the 90th percentile
+		# of the measured zeropoints
+		zp90 = np.percentile(meanZp.compressed(),90)
+		# and mask obviously non-photometric data
+		msk = np.ma.greater(zp90 - meanZp, 0.25)
+		# then iteratively fit a line to the zeropoints allow variation 
+		# with time, rejecting low outliers at each iteration
+		for iterNum in range(nIter):
+			zpFit = np.polyfit(dMjd[~msk]/100,meanZp[~msk],1)
+			resid = np.polyval(zpFit,dMjd/100) - meanZp
+			msk |= resid > 0.1
+		# now search for continguous images within 10% of fitted zeropoint
+		ncontig = np.zeros(len(msk),dtype=int)
+		for utd in np.unique(sdat['utDate']):
+			jj = np.where(sdat['utDate']==utd)[0]
+			if not np.any(msk[jj]):
+				# the whole night was photometric
+				ncontig[jj] = len(jj)
+				continue
+			i1 = 0
+			for i2 in np.where(msk[jj])[0]:
+				ncontig[jj[i1:i2]] = i2 - i1
+				i1 = i2 + 1
+			ncontig[jj[i1:]] = len(jj) - i1
+		cmsk = (ncontig < minContig) & ~msk
+		msk |= ncontig < minContig
+		print '%s %s %d/%d photometric' % (season,filt,np.sum(~msk),len(msk))
+		sdat['isPhoto'][:] &= np.logical_not(msk.filled())
+		zpTrend.add_row( (season,filt,day0.mjd,zpFit[1],zpFit[0]) )
+	return zpTab,zpTrend
 
 def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 	phot2ref = join_by_id(coaddPhot,refCat,'objId')
@@ -410,22 +442,87 @@ def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 	return zpoff
 
 def iter_selfcal(phot,frameList,refCat,**kwargs):
-	nIter = kwargs.pop('calNiter',1)
+	nIter = kwargs.pop('calNiter',2)
 	minNobs = kwargs.pop('calMinObs',10)
 	maxRms = kwargs.pop('calMaxRms',0.2)
 	colorXform = kwargs.pop('calColorXform')
+	# this routine updates the frameList with zeropoint data
+	frameList['isPhoto'] = True
+	zpts = frameList
 	for iterNum in range(nIter):
-		sePhot,coaddPhot,zpts = selfcal(phot,frameList,refCat,**kwargs)
+		sePhot,coaddPhot,zpts = selfcal(phot,zpts,refCat,**kwargs)
+		#
+		zpts,zptrend = add_photometric_flag(zpts)
 	# get the zeropoint offset to SDSS to put Bok photometry on SDSS system
 	ii = np.where( (coaddPhot['nObs'] > minNobs) &
 	               (coaddPhot['rmsMag'] < maxRms) )[0] 
 	zp0 = _get_sdss_offsets(coaddPhot[ii],refCat.refCat,colorXform)
+	# back out the extinction correction
 	for b in 'gi':
 		ii = np.where(zpts['filter']==b)[0]
-		zpts['aperZp'][ii] -= zp0[b] + k_ext[b]*zpts['airmass'][ii][:,np.newaxis]
+		kx = k_ext[b]*zpts['airmass'][ii][:,np.newaxis]
+		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp']==0)
+		zp = np.ma.subtract(zp, zp0[b] + kx)
+		zpts['aperZp'][ii] = zp.filled(0)
 	del sePhot['meanMag']
-	ii = match_by_id(sePhot,zpts,'frameIndex')
-	ccdj = sePhot['ccdNum'] - 1 # XXX
-	sePhot['calMag'] = zpts['aperZp'][ii,ccdj] - 2.5*np.ma.log10(sePhot['counts'])
-	return sePhot,coaddPhot,zpts
+	return sePhot,coaddPhot,zpts,zptrend
+
+
+##############################################################################
+#
+# helper routines for working with photometry tables
+#
+##############################################################################
+
+def extract_aperture(phot,aperNum,maskBits=None,badFrames=None):
+	# aperture-independent columns
+	gCols = ['frameIndex','objId','ccdNum','nMasked','peakCounts']
+	aphot = Table(phot[gCols].copy(),masked=True)
+	# aperture-dependent columns
+	aCols = ['counts','countsErr','flags']
+	for c in aCols:
+		aphot[c] = phot[c][:,aperNum]
+	# apply masks
+	if not maskBits:
+		maskBits = 2**32 - 1
+	mask = (aphot['flags'] & maskBits) > 0
+	if badFrames is not None:
+		mask[:] |= np.in1d(aphot['frameIndex'],badFrames)
+	for c in ['counts','countsErr']:
+		aphot[c].mask[:] |= mask
+	return aphot
+
+def calibrate_lightcurves(phot,zpts,zpmode='ccd'):
+	ii = match_by_id(phot,zpts,'frameIndex')
+	#
+	if zpmode == 'focalplane':
+		jj = None
+	elif zpmode == 'ccd':
+		ccd0 = 1 # XXX
+		jj = phot['ccdNum'] - ccd0
+	elif zpmode == 'amp':
+		jj = phot['ampNum'] - amp0
+	zp = zpts['aperZp'][ii,jj][:,np.newaxis]
+	#
+	apCorr = 1
+	#
+	corrCps = phot['counts'] * apCorr 
+	poscounts = np.ma.array(corrCps,mask=phot['counts']<=0)
+	magAB = zp - 2.5*np.ma.log10(poscounts)
+	magErr = 1.0856*np.ma.divide(phot['countsErr'],
+	                             np.ma.array(phot['counts'],
+	                                         mask=poscounts.mask))
+	phot['aperMag'] = magAB.filled(99.99)
+	phot['aperMagErr'] = magErr.filled(0)
+	# convert AB mag to nanomaggie
+	fluxConv = 10**(-0.4*(zp-22.5))
+	flux = corrCps * fluxConv
+	fluxErr = phot['countsErr'] * apCorr * fluxConv
+	phot['aperFlux'] = flux.filled(0)
+	phot['aperFluxErr'] = fluxErr.filled(0)
+	#
+	obsdat = zpts['frameIndex','airmass','mjdMid'].copy()
+	obsdat.rename_column('mjdMid','mjd')
+	phot = join_by_id(phot,obsdat,'frameIndex')
+	return phot
 
