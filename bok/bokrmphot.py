@@ -18,9 +18,6 @@ zp_phot_nominal = {'g':25.90,'i':25.40}
 
 bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
-seasonMjdRange = {'2014':(56600,56900),'2015':(57000,57250),
-                  '2016':(57000,57600),'2017':(57770,58000)}
-
 class Sdss2BokTransform(object):
 	colorMin = 0.4
 	colorMax = 3.0
@@ -157,7 +154,7 @@ bokMaxSeeing = 2.3/0.455
 #dataMap = bokrmpipe.quick_load_datamap()
 #refCat = idmrmphot.CleanSdssStarCatalog()
 
-def bok_selfcal(dataMap,refCat,procmap):
+def bok_zeropoints(dataMap,refCat):
 	frameListFile = os.path.join(os.path.join(os.environ['BOKRMDIR'],'data'),
 	                             'BokRMFrameList.fits')#.gz')
 	#
@@ -171,17 +168,18 @@ def bok_selfcal(dataMap,refCat,procmap):
 	frameList['season'][frameList['season']=='2013'] = '2014'
 	#badFrames = identify_bad_frames(frameList)
 	#
+	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)#,season='2017')
 	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)
 	bok7 = idmrmphot.extract_aperture(bokPhot,-2,badFrames=None)
-#	if True:
-#		del frameList['aperZp','aperZpRms','aperNstar','psfZp','psfNstar',
-#		          #'aperCorr','meanAperZp','n','chi2','outlierFrac','rchi2']
-#		          'meanAperZp','n','chi2','outlierFrac','rchi2']
 	#
 	sePhot,coaddPhot,zpts,zptrend = idmrmphot.iter_selfcal(bok7,frameList,refCat,
 	                                          magRange=bokMagRange,
 	                                          maxSeeing=bokMaxSeeing,
 	                                     calColorXform=Sdss2BokTransform())
+	#
+	rv = idmrmphot.calc_apercorrs(bokPhot,frameList,mode='ccd',refAper=-2)
+	rv.write('apcorr.fits',overwrite=True)
+	#
 	sePhot.write('sephot.fits',overwrite=True)
 	coaddPhot.write('coaddphot.fits',overwrite=True)
 	zpts.write('zpts.fits',overwrite=True)
@@ -210,8 +208,6 @@ if __name__=='__main__':
 	                help='construct lightcurves')
 	parser.add_argument('--aggregate',action='store_true',
 	                help='construct aggregate photometry')
-	parser.add_argument('--updatemeta',action='store_true',
-	                help='update metadata table with outlier stats')
 	parser.add_argument('--nightly',action='store_true',
 	                help='construct nightly lightcurves')
 	parser.add_argument('-p','--processes',type=int,default=1,
@@ -250,29 +246,19 @@ if __name__=='__main__':
 		              background=args.background,nowrite=args.nowrite)
 		timerLog('aper phot')
 	if args.zeropoint:
-		#zero_points(dataMap,procmap,photCat)
-		bok_selfcal(dataMap,photCat,procmap)
+		bok_zeropoints(dataMap,photCat)
 		timerLog('zeropoints')
 	if args.lightcurves:
-		photCat.load_bok_phot(nogroup=True)
-		calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,
+		# XXX
+		idmrmphot.calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,
 		                      season=args.season,old=args.old)
 		timerLog('lightcurves')
 	if args.aggregate:
-		photCat.load_bok_phot(nogroup=True,season=args.season)
+		# XXX
 		which = 'nightly' if args.nightly else 'all'
 		aggregate_phot(photCat,which,
 		               catDir=args.catdir,outName=args.outfile)
-#	elif args.nightly:
-#		nightly_lightcurves(refCat['filePrefix'],redo=args.redo)
 		timerLog('aggregate phot')
-	if args.updatemeta:
-		sephotfn = phot_file_names('sephot','sdssrefstars','all',args.outfile)
-		psum = load_agg_phot(os.path.join(args.catdir,sephotfn))
-		frameStats,objStats = calc_frame_stats(psum)
-		update_framelist_withoutliers(frameStats)
-		write_object_badlist(objStats,frameStats,'sdssPhotSummary.fits')
-		timerLog('update metadata')
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()

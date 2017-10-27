@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
 import os
-import numpy as np
+import itertools
 import multiprocessing
 from functools import partial
+import numpy as np
+from scipy.interpolate import interp1d
 from astropy.io import fits
 from astropy.table import Table,vstack,hstack,join
 from astropy.stats import sigma_clip
@@ -11,6 +13,16 @@ from astropy.wcs import InconsistentAxisTypesError
 from astropy.time import Time
 
 k_ext = {'g':0.17,'i':0.06}
+
+# Dec 1 of previous year to Aug 31 of same year
+seasonMjdRange = {'2014':(56627,56900),'2015':(56992,57265),
+                  '2016':(57357,57631),'2017':(57723,57996)}
+
+##############################################################################
+#
+# table helpers
+#
+##############################################################################
 
 def match_by_id(tab1,tab2,idKey):
 	# assumes the idKey field is sorted in tab2
@@ -41,6 +53,73 @@ def map_group_to_items(tab):
 	          [ np.repeat(i,np.diff(ii))
 	              for i,ii in enumerate(zip(tab.groups.indices[:-1],
 	                                        tab.groups.indices[1:])) ] )
+
+def group_mean_rms(tabGroup,cenfunc=np.ma.mean,withcount=False):
+	gMean = tabGroup.groups.aggregate(cenfunc)
+	gRms = tabGroup.groups.aggregate(np.ma.std)
+	for k in tabGroup.colnames:
+		gMean[k].mask[:] |= np.isnan(gMean[k])
+		gRms[k].mask[:] |= np.isnan(gRms[k]) | (gRms[k]==0)
+	if withcount:
+		n = tabGroup.groups.aggregate(lambda x: np.sum(~x.mask))
+		return gMean,gRms,n
+	return gMean,gRms
+
+def group_median_rms(tabGroup,withcount=False):
+	gStat = Table()
+	gStat = tabGroup.groups.aggregate(np.ma.median)
+	gRms = tabGroup.groups.aggregate(np.ma.std)
+	for k in tabGroup.colnames:
+		gStat[k].mask[:] |= np.isnan(gStat[k])
+		gRms[k].mask[:] |= np.isnan(gRms[k]) | (gRms[k]==0)
+		gStat[k+'_rms'] = gRms[k]
+	if withcount:
+		n = tabGroup.groups.aggregate(lambda x: np.sum(~x.mask))
+		for k in tabGroup.colnames:
+			gStat[k+'_n'] = n[k]
+	return gStat
+
+def fast_group_mean_rms(tabGroup,names=None,clean=True):
+	if names is None:
+		names = tabGroup.colnames + []
+	for k in names:
+		if k+'__sqr' not in tabGroup.colnames:
+			tabGroup[k+'__sqr'] = np.ma.power(tabGroup[k],2)
+			tabGroup[k+'__sqr'].mask = tabGroup[k].mask
+			tabGroup[k+'_n'] = ~tabGroup[k].mask
+	gStat = tabGroup.groups.aggregate(np.ma.sum)
+	for k in names:
+		gStat[k].mask[:] |= np.isnan(gStat[k])
+		gStat[k+'__sqr'].mask[:] |= np.isnan(gStat[k+'__sqr'])
+		gStat[k+'_n'].mask[:] |= np.isnan(gStat[k+'_n']) | (gStat[k+'_n']==0)
+		gStat[k] /= gStat[k+'_n']
+		gVar = ( np.ma.divide(gStat[k+'__sqr'],gStat[k+'_n']) - 
+		          np.ma.power(gStat[k],2) )
+		gStat[k+'_rms'] = np.ma.sqrt(gVar)
+		if clean:
+			del tabGroup[k+'__sqr',k+'_n']
+		del gStat[k+'__sqr']
+	return gStat
+
+def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,medianfirst=True):
+	origNames = tabGroup.colnames + []
+	ii = map_group_to_items(tabGroup)
+	for iterNum in range(iters):
+		print 'iteration ',iterNum+1
+		if medianfirst and iterNum==0:
+			gStat = group_median_rms(tabGroup,withcount=True)
+		else:
+			gStat = fast_group_mean_rms(tabGroup,names=origNames,clean=False)
+		for k in origNames:
+			dev = np.ma.abs((tabGroup[k]-gStat[k][ii])/gStat[k+'_rms'][ii])
+			rej = np.ma.greater(dev,sigma)
+			tabGroup[k].mask[:] |= rej
+			try:
+				tabGroup[k+'__sqr'].mask[:] |= rej
+				tabGroup[k+'_n'][rej] = False
+			except KeyError:
+				pass
+	return fast_group_mean_rms(tabGroup,names=origNames)
 
 ##############################################################################
 #
@@ -221,13 +300,9 @@ def clipped_mean_phot(phot,magKey,ivarKey,sigma=3.0,iters=3,minNobs=10):
 		nObs = np.sum(~phot['_mag'].mask)
 		print 'starting iter {0} with {1} points'.format(iterNum+1,
 		                                                 nObs)
-		                                                 #phot['nObs'].sum())
-		medMag = phot['_mag'].groups.aggregate(np.ma.median)
-		medMag.mask[:] |= np.isnan(medMag)
-		phot['dMag'] = np.ma.subtract(phot['_mag'],medMag[ii])
-		rms_mag = phot['dMag'].groups.aggregate(np.ma.std)
-		rms_mag.mask[:] |= rms_mag == 0
-		dev = np.ma.abs(phot['dMag']/rms_mag[ii])
+		gStats = group_median_rms(phot['_mag'])
+		phot['dMag'] = np.ma.subtract(phot['_mag'],gStats['_mag'][ii])
+		dev = np.ma.abs(phot['dMag']/gStats['_mag_rms'][ii])
 		reject = np.ma.greater(dev,sigma)
 		print '... max deviation {0:.2f}, rejecting {1}'.format(dev.max(),
 		                                                     reject.sum())
@@ -239,7 +314,6 @@ def clipped_mean_phot(phot,magKey,ivarKey,sigma=3.0,iters=3,minNobs=10):
 	meanPhot = phot['_wtmag','_ivar','nObs'].groups.aggregate(np.ma.sum)
 	meanPhot['meanMag'] = np.ma.divide(meanPhot['_wtmag'],meanPhot['_ivar'])
 	meanPhot['rmsMag'] = phot['_mag'].groups.aggregate(np.ma.std)
-#	import pdb; pdb.set_trace()
 	phot['dMag'] = np.ma.subtract(phot[magKey],meanPhot['meanMag'][ii])
 	del phot['_wtmag','_mag','_ivar','nObs']
 	del meanPhot['_wtmag']
@@ -378,35 +452,39 @@ def selfcal(rawPhot,frameList,refCat,mode='ccd',
 	#
 	return zpPhot,objPhot,frameList
 
-def add_photometric_flag(frameList,nIter=3,minContig=10):
+def add_photometric_flag(frameList,nIter=3,minContig=10,
+                         maxTrendDev=0.05,maxRms=0.02):
 	# resort the table by mjd (frameIndex may not be monotonic with time)
-	zpTab = frameList[frameList['mjdStart'].argsort()]
+	keys = ['frameIndex','utDate','season','filter','mjdStart',
+	        'aperZp','isPhoto']
+	mjd_ii = frameList['mjdStart'].argsort()
+	zpTab = Table(frameList[keys][mjd_ii],masked=True)
 	#
 	zp = np.ma.array(zpTab['aperZp'],mask=zpTab['aperZp']==0)
 	if zpTab['aperZp'].ndim > 1:
 		zp = zp.mean(axis=-1)
-	zpTab['_meanzp'] = zp.filled(0)
+	zpTab['_meanzp'] = zp
 	# first group by season
 	zpTab = zpTab.group_by(['season','filter'])
 	zpTrend = Table(names=('season','filter','mjd0','dzpdt','zpt0'),
 	                dtype=('S4','S1','f8','f4','f4'))
-	#
+	# fit a linear trend to the zeropoints across an observing season
+	# to account for slow decline (likely due to mirror reflectivity)
 	for (season,filt),sdat in zip(zpTab.groups.keys,zpTab.groups):
-		meanZp = np.ma.array(sdat['_meanzp'],mask=sdat['_meanzp']==0)
 		# and set the starting point to be day 0 of the season
 		day0 = Time(season+'-01-01T00:00:00',format='isot',scale='utc')
 		dMjd = sdat['mjdStart'] - day0.mjd
 		# guess that the "true" zeropoint is around the 90th percentile
 		# of the measured zeropoints
-		zp90 = np.percentile(meanZp.compressed(),90)
+		zp90 = np.percentile(sdat['_meanzp'].compressed(),90)
 		# and mask obviously non-photometric data
-		msk = np.ma.greater(zp90 - meanZp, 0.25)
+		msk = np.ma.greater(zp90 - sdat['_meanzp'], 0.25)
 		# then iteratively fit a line to the zeropoints allow variation 
 		# with time, rejecting low outliers at each iteration
 		for iterNum in range(nIter):
-			zpFit = np.polyfit(dMjd[~msk]/100,meanZp[~msk],1)
-			resid = np.polyval(zpFit,dMjd/100) - meanZp
-			msk |= resid > 0.1
+			zpFit = np.ma.polyfit(dMjd[~msk]/100,sdat['_meanzp'][~msk],1)
+			resid = np.polyval(zpFit,dMjd/100) - sdat['_meanzp']
+			msk |= np.ma.greater(resid,maxTrendDev)
 		# now search for continguous images within 10% of fitted zeropoint
 		ncontig = np.zeros(len(msk),dtype=int)
 		for utd in np.unique(sdat['utDate']):
@@ -425,7 +503,23 @@ def add_photometric_flag(frameList,nIter=3,minContig=10):
 		print '%s %s %d/%d photometric' % (season,filt,np.sum(~msk),len(msk))
 		sdat['isPhoto'][:] &= np.logical_not(msk.filled())
 		zpTrend.add_row( (season,filt,day0.mjd,zpFit[1],zpFit[0]) )
-	return zpTab,zpTrend
+	# now reject nights with too much variation in the zeropoint
+	zpTab['_meanzp_p'] = zpTab['_meanzp'].copy()
+	zpTab['_meanzp_p'].mask |= ~zpTab['isPhoto']
+	zpTab = zpTab.group_by(['utDate','filter'])
+	ii = map_group_to_items(zpTab)
+	nightMean = zpTab['_meanzp_p'].groups.aggregate(np.ma.mean)
+	nightMean.mask[np.isnan(nightMean)] = True
+	toolow = zpTab['_meanzp_p'] - nightMean[ii] < -maxRms
+	zpTab['_meanzp_p'].mask |= toolow
+	zpTab['isPhoto'][toolow] = False
+	nightRms = zpTab['_meanzp_p'].groups.aggregate(np.ma.std)
+	nightRms.mask[np.isnan(nightRms)] = True
+	badNights = np.where(np.ma.greater(nightRms,maxRms))[0]
+	for night in badNights:
+		zpTab.groups[night]['isPhoto'] = False
+	isPhoto = zpTab['isPhoto'][mjd_ii.argsort()].filled()
+	return isPhoto,zpTrend
 
 def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 	phot2ref = join_by_id(coaddPhot,refCat,'objId')
@@ -452,7 +546,8 @@ def iter_selfcal(phot,frameList,refCat,**kwargs):
 	for iterNum in range(nIter):
 		sePhot,coaddPhot,zpts = selfcal(phot,zpts,refCat,**kwargs)
 		#
-		zpts,zptrend = add_photometric_flag(zpts)
+		isPhoto,zptrend = add_photometric_flag(zpts)
+		zpts['isPhoto'] = isPhoto
 	# get the zeropoint offset to SDSS to put Bok photometry on SDSS system
 	ii = np.where( (coaddPhot['nObs'] > minNobs) &
 	               (coaddPhot['rmsMag'] < maxRms) )[0] 
@@ -461,12 +556,98 @@ def iter_selfcal(phot,frameList,refCat,**kwargs):
 	for b in 'gi':
 		ii = np.where(zpts['filter']==b)[0]
 		kx = k_ext[b]*zpts['airmass'][ii][:,np.newaxis]
-		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp']==0)
+		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp'][ii]==0)
 		zp = np.ma.subtract(zp, zp0[b] + kx)
 		zpts['aperZp'][ii] = zp.filled(0)
 	del sePhot['meanMag']
 	return sePhot,coaddPhot,zpts,zptrend
 
+##############################################################################
+#
+# aperture corrections
+#
+##############################################################################
+
+def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
+                   maxRmsFrac=0.50,minSnr=20,minNstar=20,iters=2,sigma=2.0):
+	''' mode is 'focalplane','ccd','amp' 
+	    assumes input list only contains stars'''
+	frameList.sort('frameIndex')
+	nAper = 8 # XXX
+	if mode == 'focalplane':
+		apGroups = ['frameIndex']
+		groupNum = 0
+		nGroup = 1
+	elif mode == 'ccd':
+		apGroups = ['frameIndex','ccdNum']
+		ccd0 = 1 # XXX
+		groupNum = rawPhot['ccdNum'] - ccd0
+		nGroup = 4 # nCcd XXX
+	elif mode == 'amp':
+		apGroups = ['frameIndex','ampNum']
+		nGroup = -1 # namp XXX
+	else:
+		raise ValueError
+	#
+	counts = np.ma.array(rawPhot['counts'],mask=rawPhot['flags']>0)
+	cerr = np.ma.array(rawPhot['countsErr'],mask=rawPhot['countsErr']==0)
+	snr = np.ma.divide(counts[:,refAper],cerr[:,refAper])
+	ii = np.where(snr.filled(0) > minSnr)[0]
+	phot = Table(rawPhot[apGroups][ii],masked=True)
+	groupNum = groupNum[ii]
+	phot['counts'] = counts[ii]
+	phot['snr'] = snr[ii]
+	# have to split the multidim column into singledim columns for aggregate
+	apNames = []
+	for j in range(nAper):
+		k = '_apc_%02d' % j
+		phot[k] = np.ma.divide(phot['counts'][:,refAper],
+		                       phot['counts'][:,j])
+		apNames.append(k)
+	# compute the sigma-clipped mean aperture correction in each group
+	phot = phot.group_by(apGroups)
+	gStat = clipped_group_mean_rms(phot[apNames])
+	ii = match_by_id(phot.groups.keys,frameList,'frameIndex')
+	gStatAll = gStat # XXX
+	# back to multidim arrays
+	frameList['aperCorr'] = np.zeros((1,nGroup,nAper),dtype=np.float32)
+	frameList['aperCorrRms'] = np.zeros((1,nGroup,nAper),dtype=np.float32)
+	frameList['aperNstar'] = np.zeros((1,nGroup,nAper),dtype=np.int32)
+	if mode == 'focalplane':
+		jj = 0
+	elif mode == 'ccd':
+		jj = phot.groups.keys['ccdNum'] - ccd0
+	else:
+		raise ValueError
+	def _restack_arr(a,sfx):
+		return np.dstack([a[k+sfx].filled(0) for k in apNames]).squeeze()
+	frameList['aperCorr'][ii,jj] = _restack_arr(gStatAll,'')
+	frameList['aperCorrRms'][ii,jj] = _restack_arr(gStatAll,'_rms')
+	frameList['aperNstar'][ii,jj] = _restack_arr(gStatAll,'_n')
+	# fill bad / missing values
+	if mode != 'focalplane':
+		apCorr = np.ma.array(frameList['aperCorr'],
+		                     mask=frameList['aperCorr']==0)
+		fracRms = np.ma.divide(frameList['aperCorrRms'],apCorr)
+		apCorr.mask[:] |= ( (frameList['aperNstar'] < minNstar) |
+		                    (frameList['aperCorrRms'] == 0) |
+		                    (fracRms > maxRmsFrac) )
+		meanCorr = apCorr.mean(axis=1)
+		nGood = (~apCorr.mask).sum(axis=1)
+		meanCorr.mask[:] |= nGood < nGroup//2
+		for j in range(nAper):
+			if j==range(nAper)[refAper]:
+				meanCorr[:,j] = 1.0
+				continue
+			ii = ~meanCorr.mask[:,j] # good values
+			fillfun = interp1d(frameList['mjdStart'][ii],
+			                   meanCorr[ii,j].filled(),
+			                   fill_value='extrapolate')
+			meanCorr[~ii,j] = fillfun(frameList['mjdStart'][~ii])
+		meanCorr = np.tile(meanCorr[:,np.newaxis,:],(1,4,1)) 
+		# now replace the masked entries
+		frameList['aperCorr'][apCorr.mask] = meanCorr[apCorr.mask].filled()
+	return frameList
 
 ##############################################################################
 #
