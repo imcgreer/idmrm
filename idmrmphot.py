@@ -671,9 +671,12 @@ def calibrate_lightcurves(phot,zpts,zpmode='ccd'):
 		jj = phot['ccdNum'] - ccd0
 	elif zpmode == 'amp':
 		jj = phot['ampNum'] - amp0
-	zp = zpts['aperZp'][ii,jj][:,np.newaxis]
 	#
-	apCorr = 1
+	zp = zpts['aperZp'][ii,jj][:,np.newaxis]
+	zp = np.ma.array(zp,mask=(zp==0))
+	# XXX not same jj
+	apCorr = zpts['aperCorr'][ii,jj]
+	apCorr = np.ma.array(apCorr,mask=(apCorr==0))
 	#
 	corrCps = phot['counts'] * apCorr 
 	poscounts = np.ma.array(corrCps,mask=phot['counts']<=0)

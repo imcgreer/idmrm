@@ -251,9 +251,12 @@ if __name__=='__main__':
 		bok_zeropoints(dataMap,photCat)
 		timerLog('zeropoints')
 	if args.lightcurves:
-		# XXX
-		idmrmphot.calibrate_lightcurves(photCat,dataMap,zpFile=args.zptable,
-		                      season=args.season,old=args.old)
+		print 'loading zeropoints table {0}'.format(args.zptable)
+		frameList = Table.read(args.zptable)
+		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
+		                                season=args.season)
+		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList)
+		phot.write('{0}_{1}.fits'.format('bokrmphot',photCat.name))
 		timerLog('lightcurves')
 	if args.aggregate:
 		# XXX
