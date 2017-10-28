@@ -693,7 +693,7 @@ def calibrate_lightcurves(phot,zpts,zpmode='ccd'):
 	phot['aperFlux'] = flux.filled(0)
 	phot['aperFluxErr'] = fluxErr.filled(0)
 	#
-	obsdat = zpts['frameIndex','airmass','mjdMid'].copy()
+	obsdat = zpts['frameIndex','airmass','mjdMid','filter'].copy()
 	obsdat.rename_column('mjdMid','mjd')
 	phot = join_by_id(phot,obsdat,'frameIndex')
 	return phot

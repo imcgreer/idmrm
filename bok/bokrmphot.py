@@ -256,7 +256,8 @@ if __name__=='__main__':
 		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
 		                                season=args.season)
 		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList)
-		phot.write('{0}_{1}.fits'.format('bokrmphot',photCat.name))
+		phot.write('{0}_{1}.fits'.format('bokrmphot',photCat.name),
+		           overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
 		# XXX
