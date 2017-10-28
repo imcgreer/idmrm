@@ -18,6 +18,12 @@ k_ext = {'g':0.17,'i':0.06}
 seasonMjdRange = {'2014':(56627,56900),'2015':(56992,57265),
                   '2016':(57357,57631),'2017':(57723,57996)}
 
+def get_season(mjd):
+	seasons = np.arange(2014,2017+1).astype('S4')
+	mjdstart = np.array([seasonMjdRange[s][0] for s in seasons])
+	ii = np.digitize(mjd,mjdstart) - 1
+	return seasons[ii]
+
 ##############################################################################
 #
 # table helpers
@@ -643,13 +649,18 @@ def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
 #
 ##############################################################################
 
-def extract_aperture(phot,aperNum,maskBits=None,badFrames=None):
+def extract_aperture(phot,aperNum,maskBits=None,
+                     badFrames=None,lightcurve=False):
 	# aperture-independent columns
 	gCols = ['frameIndex','objId','ccdNum','nMasked','peakCounts']
+	if lightcurve:
+		gCols += ['airmass','mjd','filter']
 	aphot = Table(phot[gCols].copy(),masked=True)
 	# aperture-dependent columns
-	aCols = ['counts','countsErr','flags']
-	for c in aCols:
+	apCols = ['counts','countsErr']
+	if 'aperMag' in phot.colnames:
+		apCols += ['aper'+s1+s2 for s1 in ['Mag','Flux'] for s2 in ['','Err']]
+	for c in apCols+['flags']:
 		aphot[c] = phot[c][:,aperNum]
 	# apply masks
 	if not maskBits:
@@ -657,7 +668,7 @@ def extract_aperture(phot,aperNum,maskBits=None,badFrames=None):
 	mask = (aphot['flags'] & maskBits) > 0
 	if badFrames is not None:
 		mask[:] |= np.in1d(aphot['frameIndex'],badFrames)
-	for c in ['counts','countsErr']:
+	for c in apCols:
 		aphot[c].mask[:] |= mask
 	return aphot
 
@@ -685,8 +696,7 @@ def calibrate_lightcurves(phot,zpts,zpmode='ccd'):
 	                             np.ma.array(phot['counts'],
 	                                         mask=poscounts.mask))
 	phot['aperMag'] = magAB.filled(99.99)
-	phot['aperMagErr'] = magErr.filled(0)
-	# convert AB mag to nanomaggie
+	phot['aperMagErr'] = magErr.filled(0) # convert AB mag to nanomaggie
 	fluxConv = 10**(-0.4*(zp-22.5))
 	flux = corrCps * fluxConv
 	fluxErr = phot['countsErr'] * apCorr * fluxConv
@@ -697,4 +707,64 @@ def calibrate_lightcurves(phot,zpts,zpmode='ccd'):
 	obsdat.rename_column('mjdMid','mjd')
 	phot = join_by_id(phot,obsdat,'frameIndex')
 	return phot
+
+def get_binned_stats(apPhot,refCat,binEdges=None,minNobs=10,**kwargs):
+	colorXform = kwargs.pop('calColorXform')
+	if binEdges is None:
+		binEdges = np.arange(16.9,19.51,0.2)
+	mbins = binEdges[:-1] + np.diff(binEdges)/2
+	nbins = len(mbins)
+	#
+	apPhot['season'] = get_season(apPhot['mjd'])
+	#
+	print '[{0:5d}] initial photometry table'.format(len(apPhot))
+	#
+	print '...matching to reference catalog'
+	ii = match_by_id(apPhot,refCat,'objId')
+	print '...color transformation to get external reference mags'
+	refMag = np.choose(apPhot['filter']=='g',
+	                   [refCat['i'][ii],refCat['g'][ii]])
+	refClr = refCat['g'][ii] - refCat['i'][ii]
+	refMag = colorXform(refMag,refClr,apPhot['filter'])
+	jj = np.where(np.logical_and(refMag>binEdges[0],refMag<binEdges[-1]))[0]
+	print '[{0:5d}] select within reference mag range'.format(len(jj))
+	apPhot = apPhot[jj]
+	apPhot['refMag'] = refMag[jj]
+	apPhot['dMagExt'] = apPhot['aperMag'] - apPhot['refMag']
+	#
+	# calc mean mags, internal calibration mag differences
+	print '...calculate internal mean magnitudes'
+	apPhot = apPhot.group_by(['season','filter','objId'])
+	objPhot = clipped_group_mean_rms(apPhot['aperMag','dMagExt'])
+	objPhot = hstack([apPhot.groups.keys,objPhot])
+	#
+	print '...bin by reference mag'
+	objPhot['refMag'] = apPhot['refMag'][apPhot.groups.indices[:-1]]
+	binNum = np.digitize(objPhot['refMag'],binEdges)
+	objPhot['binNum'] = binNum - 1
+	assert np.all((objPhot['binNum']>=0)&(objPhot['binNum']<len(mbins)))
+	#
+	objPhot = objPhot[objPhot['aperMag_n']>=minNobs]
+	#
+	binPhot = objPhot.group_by(['season','filter','binNum'])
+	binGroup = Table(binPhot.groups.keys)
+	perc = lambda x,p: np.percentile(x.compressed(),p)
+	rmskeys = ['aperMag_rms','dMagExt_rms']
+	for p in [25,50,75]:
+		pc = binPhot[rmskeys].groups.aggregate(lambda x: perc(x,p))
+		binGroup['sig%d'%(p)] = pc['aperMag_rms']
+		binGroup['sigExt%d'%(p)] = pc['dMagExt_rms']
+	#
+	binGroup = binGroup.group_by(['season','filter'])
+	binStats = Table(binGroup.groups.keys)
+	for p in [25,50,75]:
+		binStats['sig%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
+		binStats['sigExt%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
+	for i in range(len(binStats)):
+		for p in [25,50,75]:
+			jj = binGroup.groups[i]['binNum']
+			binStats['sig%d'%p][i,jj] = binGroup.groups[i]['sig%d'%p]
+			binStats['sigExt%d'%p][i,jj] = binGroup.groups[i]['sigExt%d'%p]
+#	binStats['mbins'] = mbins # XXX meta
+	return binStats
 
