@@ -54,17 +54,6 @@ def map_group_to_items(tab):
 	              for i,ii in enumerate(zip(tab.groups.indices[:-1],
 	                                        tab.groups.indices[1:])) ] )
 
-def group_mean_rms(tabGroup,cenfunc=np.ma.mean,withcount=False):
-	gMean = tabGroup.groups.aggregate(cenfunc)
-	gRms = tabGroup.groups.aggregate(np.ma.std)
-	for k in tabGroup.colnames:
-		gMean[k].mask[:] |= np.isnan(gMean[k])
-		gRms[k].mask[:] |= np.isnan(gRms[k]) | (gRms[k]==0)
-	if withcount:
-		n = tabGroup.groups.aggregate(lambda x: np.sum(~x.mask))
-		return gMean,gRms,n
-	return gMean,gRms
-
 def group_median_rms(tabGroup,withcount=False):
 	gStat = Table()
 	gStat = tabGroup.groups.aggregate(np.ma.median)
@@ -79,7 +68,7 @@ def group_median_rms(tabGroup,withcount=False):
 			gStat[k+'_n'] = n[k]
 	return gStat
 
-def fast_group_mean_rms(tabGroup,names=None,clean=True):
+def group_mean_rms(tabGroup,names=None,clean=True):
 	if names is None:
 		names = tabGroup.colnames + []
 	for k in names:
@@ -109,7 +98,7 @@ def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,medianfirst=True):
 		if medianfirst and iterNum==0:
 			gStat = group_median_rms(tabGroup,withcount=True)
 		else:
-			gStat = fast_group_mean_rms(tabGroup,names=origNames,clean=False)
+			gStat = group_mean_rms(tabGroup,names=origNames,clean=False)
 		for k in origNames:
 			dev = np.ma.abs((tabGroup[k]-gStat[k][ii])/gStat[k+'_rms'][ii])
 			rej = np.ma.greater(dev,sigma)
@@ -119,7 +108,7 @@ def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,medianfirst=True):
 				tabGroup[k+'_n'][rej] = False
 			except KeyError:
 				pass
-	return fast_group_mean_rms(tabGroup,names=origNames)
+	return group_mean_rms(tabGroup,names=origNames)
 
 ##############################################################################
 #
@@ -300,7 +289,7 @@ def clipped_mean_phot(phot,magKey,ivarKey,sigma=3.0,iters=3,minNobs=10):
 		nObs = np.sum(~phot['_mag'].mask)
 		print 'starting iter {0} with {1} points'.format(iterNum+1,
 		                                                 nObs)
-		gStats = group_median_rms(phot['_mag'])
+		gStats = group_median_rms(phot['_mag',])
 		phot['dMag'] = np.ma.subtract(phot['_mag'],gStats['_mag'][ii])
 		dev = np.ma.abs(phot['dMag']/gStats['_mag_rms'][ii])
 		reject = np.ma.greater(dev,sigma)
@@ -608,11 +597,10 @@ def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
 	phot = phot.group_by(apGroups)
 	gStat = clipped_group_mean_rms(phot[apNames])
 	ii = match_by_id(phot.groups.keys,frameList,'frameIndex')
-	gStatAll = gStat # XXX
 	# back to multidim arrays
 	frameList['aperCorr'] = np.zeros((1,nGroup,nAper),dtype=np.float32)
 	frameList['aperCorrRms'] = np.zeros((1,nGroup,nAper),dtype=np.float32)
-	frameList['aperNstar'] = np.zeros((1,nGroup,nAper),dtype=np.int32)
+	frameList['aperCorrNstar'] = np.zeros((1,nGroup,nAper),dtype=np.int32)
 	if mode == 'focalplane':
 		jj = 0
 	elif mode == 'ccd':
@@ -621,15 +609,15 @@ def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
 		raise ValueError
 	def _restack_arr(a,sfx):
 		return np.dstack([a[k+sfx].filled(0) for k in apNames]).squeeze()
-	frameList['aperCorr'][ii,jj] = _restack_arr(gStatAll,'')
-	frameList['aperCorrRms'][ii,jj] = _restack_arr(gStatAll,'_rms')
-	frameList['aperNstar'][ii,jj] = _restack_arr(gStatAll,'_n')
+	frameList['aperCorr'][ii,jj] = _restack_arr(gStat,'')
+	frameList['aperCorrRms'][ii,jj] = _restack_arr(gStat,'_rms')
+	frameList['aperCorrNstar'][ii,jj] = _restack_arr(gStat,'_n')
 	# fill bad / missing values
 	if mode != 'focalplane':
 		apCorr = np.ma.array(frameList['aperCorr'],
 		                     mask=frameList['aperCorr']==0)
 		fracRms = np.ma.divide(frameList['aperCorrRms'],apCorr)
-		apCorr.mask[:] |= ( (frameList['aperNstar'] < minNstar) |
+		apCorr.mask[:] |= ( (frameList['aperCorrNstar'] < minNstar) |
 		                    (frameList['aperCorrRms'] == 0) |
 		                    (fracRms > maxRmsFrac) )
 		meanCorr = apCorr.mean(axis=1)

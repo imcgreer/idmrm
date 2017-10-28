@@ -169,21 +169,23 @@ def bok_zeropoints(dataMap,refCat):
 	#badFrames = identify_bad_frames(frameList)
 	#
 	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)#,season='2017')
-	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)
 	bok7 = idmrmphot.extract_aperture(bokPhot,-2,badFrames=None)
 	#
 	sePhot,coaddPhot,zpts,zptrend = idmrmphot.iter_selfcal(bok7,frameList,refCat,
 	                                          magRange=bokMagRange,
 	                                          maxSeeing=bokMaxSeeing,
 	                                     calColorXform=Sdss2BokTransform())
+	frameList = zpts # XXX
 	#
-	rv = idmrmphot.calc_apercorrs(bokPhot,frameList,mode='ccd',refAper=-2)
-	rv.write('apcorr.fits',overwrite=True)
+	frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,
+	                                     mode='ccd',refAper=-2)
 	#
-	sePhot.write('sephot.fits',overwrite=True)
-	coaddPhot.write('coaddphot.fits',overwrite=True)
-	zpts.write('zpts.fits',overwrite=True)
-	zptrend.write('zptrend.dat',overwrite=True,format='ascii')
+	#sePhot.write('sephot.fits',overwrite=True)
+	#coaddPhot.write('coaddphot.fits',overwrite=True)
+	#zpts.write('zpts.fits',overwrite=True)
+	#zptrend.write('zptrend.dat',overwrite=True,format='ascii')
+	#rv.write('apcorr.fits',overwrite=True)
+	frameList.write(frameListFile,overwrite=True)
 
 
 ##############################################################################
