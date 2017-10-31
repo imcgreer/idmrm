@@ -96,12 +96,12 @@ def group_mean_rms(tabGroup,names=None,clean=True):
 		del gStat[k+'__sqr']
 	return gStat
 
-def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,medianfirst=True):
+def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,nmedian=1):
 	origNames = tabGroup.colnames + []
 	ii = map_group_to_items(tabGroup)
 	for iterNum in range(iters):
 		print 'iteration ',iterNum+1
-		if medianfirst and iterNum==0:
+		if iterNum < nmedian:
 			gStat = group_median_rms(tabGroup,withcount=True)
 		else:
 			gStat = group_mean_rms(tabGroup,names=origNames,clean=False)
@@ -564,11 +564,12 @@ def iter_selfcal(phot,frameList,refCat,**kwargs):
 ##############################################################################
 
 def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
-                   maxRmsFrac=0.50,minSnr=20,minNstar=20,iters=2,sigma=2.0):
+                   maxRmsFrac=0.50,minSnr=20,minNstar=20,iters=2,sigma=2.0,
+                   interpbad=True):
 	''' mode is 'focalplane','ccd','amp' 
 	    assumes input list only contains stars'''
 	frameList.sort('frameIndex')
-	nAper = 8 # XXX
+	nAper = rawPhot['counts'].shape[-1] # XXX
 	if mode == 'focalplane':
 		apGroups = ['frameIndex']
 		groupNum = 0
@@ -601,7 +602,7 @@ def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
 		apNames.append(k)
 	# compute the sigma-clipped mean aperture correction in each group
 	phot = phot.group_by(apGroups)
-	gStat = clipped_group_mean_rms(phot[apNames])
+	gStat = clipped_group_mean_rms(phot[apNames],iters=4,sigma=2.5,nmedian=2)
 	ii = match_by_id(phot.groups.keys,frameList,'frameIndex')
 	# back to multidim arrays
 	frameList['aperCorr'] = np.zeros((1,nGroup,nAper),dtype=np.float32)
@@ -619,7 +620,7 @@ def calc_apercorrs(rawPhot,frameList,mode='ccd',refAper=-2,
 	frameList['aperCorrRms'][ii,jj] = _restack_arr(gStat,'_rms')
 	frameList['aperCorrNstar'][ii,jj] = _restack_arr(gStat,'_n')
 	# fill bad / missing values
-	if mode != 'focalplane':
+	if interpbad and mode != 'focalplane':
 		apCorr = np.ma.array(frameList['aperCorr'],
 		                     mask=frameList['aperCorr']==0)
 		fracRms = np.ma.divide(frameList['aperCorrRms'],apCorr)
