@@ -38,6 +38,25 @@ class Sdss2BokTransform(object):
 		                  mask=(colors<self.colorMin)|(colors>self.colorMax))
 		return corrMags
 
+class BokConfig(object):
+	name = 'bok'
+	nCcd = 4
+	nAmp = 16
+	ccd0 = 1
+	nAper = 7
+	zpAperNum = -2
+	zpMinSnr = 10.
+	zpMinNobs = 10
+	zpMaxSeeing = 2.3/0.455
+	zpMaxChiVal = 5.
+	apCorrMaxRmsFrac = 0.5
+	apCorrMinSnr = 20.
+	apCorrMinNstar = 20
+	magRange = {'g':(17.0,19.5),'i':(16.5,19.2)}
+	colorxfun = Sdss2BokTransform()
+	def colorXform(self,mag,clr,filt):
+		return self.colorxfun(mag,clr,filt)
+
 
 ##############################################################################
 #
@@ -148,44 +167,31 @@ def load_raw_bok_aperphot(dataMap,targetName,season=None,old=False):
 	return phot
 
 
-bokMagRange = {'g':(17.0,19.5),'i':(16.5,19.2)}
-bokMaxSeeing = 2.3/0.455
-
 #dataMap = bokrmpipe.quick_load_datamap()
 #refCat = idmrmphot.CleanSdssStarCatalog()
 
-def bok_zeropoints(dataMap,refCat):
-	frameListFile = os.path.join(os.path.join(os.environ['BOKRMDIR'],'data'),
-	                             'BokRMFrameList.fits')#.gz')
-	#
-	frameList = Table.read(frameListFile)
+def bok_zeropoints(dataMap,frameList,refCat,bokCfg,debug=False):
 	frameList.sort('frameIndex')
+	#
 	fields = ['frameIndex','utDate','filter','mjdStart','mjdMid','airmass']
 	frameList = idmrmphot.join_by_id(frameList,dataMap.obsDb[fields],
 	                                 'frameIndex')
-	# XXX
-	frameList['season'] = [ utd[:4] for utd in frameList['utDate'] ]
-	frameList['season'][frameList['season']=='2013'] = '2014'
-	#badFrames = identify_bad_frames(frameList)
+	# zero point trends are fit over a season
+	if 'season' not in frameList.colnames:
+		frameList['season'] = idmrmphot.get_season(frameList['mjdStart'])
+	# select the 7" aperture
+	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)
+	bok7 = idmrmphot.extract_aperture(bokPhot,bokCfg.zpAperNum,badFrames=None)
+	# calculate zeropoints and aperture corrections
+	zpdat = idmrmphot.iter_selfcal(bok7,frameList,refCat,bokCfg)
+	frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,bokCfg,mode='ccd')
 	#
-	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)#,season='2017')
-	bok7 = idmrmphot.extract_aperture(bokPhot,-2,badFrames=None)
-	#
-	sePhot,coaddPhot,zpts,zptrend = idmrmphot.iter_selfcal(bok7,frameList,refCat,
-	                                          magRange=bokMagRange,
-	                                          maxSeeing=bokMaxSeeing,
-	                                     calColorXform=Sdss2BokTransform())
-	frameList = zpts # XXX
-	#
-	frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,
-	                                     mode='ccd',refAper=-2)
-	#
-	#sePhot.write('sephot.fits',overwrite=True)
-	#coaddPhot.write('coaddphot.fits',overwrite=True)
-	#zpts.write('zpts.fits',overwrite=True)
-	#zptrend.write('zptrend.dat',overwrite=True,format='ascii')
-	#rv.write('apcorr.fits',overwrite=True)
-	frameList.write(frameListFile,overwrite=True)
+	if True:
+		zpdat.zptrend.write('zptrend.dat',overwrite=True,format='ascii')
+	if debug:
+		zpdat.sePhot.write('zp_sephot.fits',overwrite=True)
+		zpdat.coaddPhot.write('zp_coaddphot.fits',overwrite=True)
+	return frameList
 
 
 ##############################################################################
@@ -212,6 +218,8 @@ if __name__=='__main__':
 	                help='construct aggregate photometry')
 	parser.add_argument('--nightly',action='store_true',
 	                help='construct nightly lightcurves')
+	parser.add_argument('--binnedstats',action='store_true',
+	                help='compute phot stats in mag bins')
 	parser.add_argument('-p','--processes',type=int,default=1,
 	                help='number of processes to use [default=single]')
 	parser.add_argument('--old',action='store_true',
@@ -220,7 +228,7 @@ if __name__=='__main__':
 	                    help='increase output verbosity')
 	parser.add_argument('--lctable',type=str,
 	                help='lightcurve table')
-	parser.add_argument('--zptable',type=str,default='bokrm_zeropoints.fits',
+	parser.add_argument('--zptable',type=str,
 	                help='zeropoints table')
 	parser.add_argument('--catdir',type=str,default='.',
 	                help='directory containing photometry catalogs')
@@ -228,6 +236,8 @@ if __name__=='__main__':
 	                help='skip writing output files')
 	parser.add_argument('--season',type=str,
 	                help='observing season')
+	parser.add_argument('--aper',type=int,default=-2,
+	                help='index of aperture to select [-2]')
 	parser.add_argument('--outfile',type=str,default='',
 	                help='output file')
 	args = parser.parse_args()
@@ -236,7 +246,13 @@ if __name__=='__main__':
 	dataMap = bokrmpipe.config_rm_data(dataMap,args)
 	photCat = idmrmphot.load_target_catalog(args.catalog,args.catdir,
 	                                        args.lctable)
-#	photCat.load_ref_catalog()
+	bokCfg = BokConfig()
+	if args.zptable:
+		frameListFile = args.zptable
+	else:
+		_dataDir = os.path.join(os.environ['BOKRMDIR'],'data')
+		frameListFile = os.path.join(_dataDir,'BokRMFrameList.fits.gz')
+	bokPhot,frameList = None,None
 	if args.processes == 1:
 		procmap = map
 	else:
@@ -248,14 +264,18 @@ if __name__=='__main__':
 		              background=args.background,nowrite=args.nowrite)
 		timerLog('aper phot')
 	if args.zeropoint:
-		bok_zeropoints(dataMap,photCat)
+		print 'loading zeropoints table {0}'.format(frameListFile)
+		frameList = Table.read(frameListFile)
+		frameList = bok_zeropoints(dataMap,frameList,photCat,bokCfg)
+		frameList.write(frameListFile,overwrite=True)
 		timerLog('zeropoints')
 	if args.lightcurves:
-		print 'loading zeropoints table {0}'.format(args.zptable)
-		frameList = Table.read(args.zptable)
+		if frameList is None:
+			print 'loading zeropoints table {0}'.format(frameListFile)
+			frameList = Table.read(frameListFIle)
 		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
 		                                season=args.season)
-		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList)
+		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList,bokCfg)
 		phot.write('{0}_{1}.fits'.format('bokrmphot',photCat.name),
 		           overwrite=True)
 		timerLog('lightcurves')
@@ -265,6 +285,15 @@ if __name__=='__main__':
 		aggregate_phot(photCat,which,
 		               catDir=args.catdir,outName=args.outfile)
 		timerLog('aggregate phot')
+	if args.binnedstats:
+		if bokPhot is None:
+			bokPhot = Table.read('{0}_{1}.fits'.format('bokrmphot',
+			                                           photCat.name))
+		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,badFrames=None,
+		                                    lightcurve=True)
+		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,bokCfg)
+		outfile = args.outfile if args.outfile else 'phot_stats_bok.fits'
+		bs.write(outfile,overwrite=True)
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()
