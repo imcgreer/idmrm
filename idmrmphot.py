@@ -157,68 +157,6 @@ class SdssStarCatalog(RmTargetCatalog):
 	                          'sdssRefStars_DR13.fits.gz')
 	def __init__(self,**kwargs):
 		super(SdssStarCatalog,self).__init__(**kwargs)
-	def bin_stats_by_ref_mag(self,band='g',aperNum=3,binEdges=None):
-		if binEdges is None:
-			binEdges = np.arange(16.9,19.11,0.2)
-		mbins = binEdges[:-1] + np.diff(binEdges)/2
-		nbins = len(mbins)
-		# group the reference objects into magnitude bins using ref mag
-		self.load_ref_catalog()
-		binNum = np.digitize(self.refCat[band],binEdges)
-		ii = np.where((binNum>=1) & (binNum<=nbins))[0]
-		refCat = self.refCat['objId',band][ii].copy()
-		refCat['binNum'] = binNum[ii] - 1
-		#
-		phot = self.get_aperture_table(aperNum)
-		phot = phot[(phot['filter']==band) & 
-		            np.in1d(phot['objId'],refCat['objId']) ]
-		objGroup = phot.group_by('objId')
-		#
-		minNobs = 10
-		def min_nobs(table,key_colnames):
-			return np.sum(~table['aperMag'].mask) > minNobs
-		objGroup = objGroup.groups.filter(min_nobs)
-		#
-		ii = map_group_to_items(objGroup)
-		nClipIter = 3
-		sigThresh = 5.0
-		mask = objGroup['aperMag'].mask.copy()
-		objGroup['n'] = ~mask
-		print 'before iter: ',np.sum(~mask)
-		for iterNum in range(nClipIter):
-			mean_mag,rms_mag = calc_mean_mags(objGroup,median=True,
-			                                  extMask=mask)
-			dmag = objGroup['aperMag'] - mean_mag[ii]
-			nsig = dmag / rms_mag[ii]
-			print 'max deviation: ',np.ma.abs(nsig[~mask]).max()
-			if iterNum < nClipIter-1:
-				mask[:] |= np.ma.greater(np.ma.abs(nsig),sigThresh)
-				print 'after iter: ',iterNum+1,np.sum(~mask)
-		objGroup['nClip'] = ~mask
-		#
-		aggPhot = join_by_objid(objGroup.groups.keys,refCat)
-		aggPhot['meanMag'] = mean_mag
-		aggPhot['rmsInt'] = rms_mag
-		objGroup['dmagExt'] = objGroup['aperMag'] - aggPhot[band][ii]
-		objGroup['dmagInt'] = dmag
-		outies = objGroup['n','nClip'].groups.aggregate(np.ma.sum)
-		aggPhot['outlierFrac'] = 1-outies['nClip']/outies['n'].astype(float)
-		binAggPhot = aggPhot.group_by('binNum')
-		binGroup = Table(binAggPhot.groups.keys)
-		binGroup['mbins'] = mbins
-		perc = lambda x,p: np.percentile(x.compressed(),p)
-		for p in [25,50,75]:
-			pc = binAggPhot['rmsInt'].groups.aggregate(lambda x: perc(x,p))
-			binGroup['sig%d'%(p)] = pc
-		binGroup['outlierFrac'] = binAggPhot['outlierFrac'].groups.aggregate(
-		                                                        np.ma.mean)
-		# external accuracy in mag bins
-#		allAggPhot = objGroup.group_by('binNum')
-#		binExtOff = allAggPhot['dmagExt'].groups.aggregate(np.ma.median)
-#		binExtRms = allAggPhot['dmagExt'].groups.aggregate(np.ma.std)
-#		binGroup['median_dmagExt'] = binExtOff
-#		binGroup['rmsExt'] = binExtRms
-		return binGroup
 
 class SdssStarCatalogOld(SdssStarCatalog):
 	name = 'sdssstarsold'
@@ -245,6 +183,8 @@ class CleanSdssStarCatalog(SdssStarCatalog):
 		print 'removed ',len(m1),' quasars from star catalog ',len(refCat)
 		# remove objects with bad photometry; bad list comes 
 		# from calc_group_stats
+		# XXX
+		raise NotImplementedError("this file no longer exists")
 		f = os.path.join(bokRmDataDir,'sdssPhotSummary.fits')
 		objSum = Table.read(f)
 		for b in 'gi':
@@ -685,6 +625,7 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
                      **kwargs):
 	if binEdges is None:
 		binEdges = np.arange(16.9,19.51,0.2)
+	pctiles = [25,50,75,90,99]
 	mbins = binEdges[:-1] + np.diff(binEdges)/2
 	nbins = len(mbins)
 	#
@@ -723,21 +664,21 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
 	binGroup = Table(binPhot.groups.keys)
 	perc = lambda x,p: np.percentile(x.compressed(),p)
 	rmskeys = ['aperMag_rms','dMagExt_rms']
-	for p in [25,50,75]:
+	for p in pctiles:
 		pc = binPhot[rmskeys].groups.aggregate(lambda x: perc(x,p))
 		binGroup['sig%d'%(p)] = pc['aperMag_rms']
 		binGroup['sigExt%d'%(p)] = pc['dMagExt_rms']
 	#
 	binGroup = binGroup.group_by(['season','filter'])
 	binStats = Table(binGroup.groups.keys)
-	for p in [25,50,75]:
+	for p in pctiles:
 		binStats['sig%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
 		binStats['sigExt%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
 	for i in range(len(binStats)):
-		for p in [25,50,75]:
+		for p in pctiles:
 			jj = binGroup.groups[i]['binNum']
 			binStats['sig%d'%p][i,jj] = binGroup.groups[i]['sig%d'%p]
 			binStats['sigExt%d'%p][i,jj] = binGroup.groups[i]['sigExt%d'%p]
-#	binStats['mbins'] = mbins # XXX meta
+	binStats.meta['mbins'] = ','.join(['%.2f'%m for m in mbins])
 	return binStats
 

@@ -272,7 +272,7 @@ if __name__=='__main__':
 	if args.lightcurves:
 		if frameList is None:
 			print 'loading zeropoints table {0}'.format(frameListFile)
-			frameList = Table.read(frameListFIle)
+			frameList = Table.read(frameListFile)
 		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
 		                                season=args.season)
 		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList,bokCfg)
