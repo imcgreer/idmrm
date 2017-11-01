@@ -207,8 +207,7 @@ class CfhtStarCatalog(RmTargetCatalog):
 	def __init__(self,**kwargs):
 		super(CfhtStarCatalog,self).__init__(**kwargs)
 
-def load_target_catalog(target,catdir,photfile):
-	if catdir is None: catdir='.'
+def load_target_catalog(target):
 	targets = {
 	  'sdssrm':RmQsoCatalog,
 	  'allqsos':AllQsoCatalog,
@@ -217,7 +216,7 @@ def load_target_catalog(target,catdir,photfile):
 	  'sdssold':SdssStarCatalogOld,
 	  'cfht':CfhtStarCatalog,
 	}
-	return targets[target]()#catdir=catdir,photfile=photfile)
+	return targets[target]()
 
 
 ##############################################################################

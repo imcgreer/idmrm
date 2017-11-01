@@ -18,6 +18,12 @@ zp_phot_nominal = {'g':25.90,'i':25.40}
 
 bokrm_aperRad = np.concatenate([np.arange(2,9.51,1.5),[15.,22.5]])
 
+def get_phot_file(photCat,inFile):
+	if inFile is None:
+		return '{0}_{1}.fits'.format('bokrmphot',photCat.name)
+	else:
+		return inFile
+
 class Sdss2BokTransform(object):
 	colorMin = 0.4
 	colorMax = 3.0
@@ -244,8 +250,7 @@ if __name__=='__main__':
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
 	dataMap = bokrmpipe.config_rm_data(dataMap,args)
-	photCat = idmrmphot.load_target_catalog(args.catalog,args.catdir,
-	                                        args.lctable)
+	photCat = idmrmphot.load_target_catalog(args.catalog)
 	bokCfg = BokConfig()
 	if args.zptable:
 		frameListFile = args.zptable
@@ -276,8 +281,9 @@ if __name__=='__main__':
 		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
 		                                season=args.season)
 		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList,bokCfg)
-		phot.write('{0}_{1}.fits'.format('bokrmphot',photCat.name),
-		           overwrite=True)
+		photFile = get_phot_file(photCat,args.lctable)
+		print 'writing lightcurve catalog {}'.format(photFile)
+		phot.write(photFile,overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
 		# XXX
@@ -287,8 +293,9 @@ if __name__=='__main__':
 		timerLog('aggregate phot')
 	if args.binnedstats:
 		if bokPhot is None:
-			bokPhot = Table.read('{0}_{1}.fits'.format('bokrmphot',
-			                                           photCat.name))
+			photFile = get_phot_file(photCat,args.lctable)
+			print 'loaded lightcurve catalog {}'.format(photFile)
+			bokPhot = Table.read(photFile)
 		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,badFrames=None,
 		                                    lightcurve=True)
 		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,bokCfg)
