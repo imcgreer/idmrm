@@ -304,47 +304,50 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 		isSee = fwhm < instrCfg.zpMaxSeeing
 	except KeyError:
 		isSee = True
+	# initialize the zeropoint columns
+	frameList['aperZp'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
+	frameList['aperZpRms'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
+	frameList['aperZpNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
+	#
 	goodFrames = frameList['frameIndex'][np.logical_and(isPhoto,isSee)]
 	# match to frame database to get observing particulars
 	frFields = ['frameIndex','filter','airmass','mjdStart']
 	rawPhot = join_by_id(rawPhot,frameList[frFields],'frameIndex')
-	# match to reference catalog to select only stars in desired magnitude
-	# range, and also cut to photometric frames
+	# match to reference catalog to select stars in desired magnitude range 
 	calPhot = join_by_id(rawPhot,refCat.refCat['objId','g','i'],'objId')
 	isG = in_range(calPhot['g'],instrCfg.magRange['g'])
 	isI = in_range(calPhot['i'],instrCfg.magRange['i'])
 	isMag = np.choose(calPhot['filter']=='g',[isI,isG])
+	calPhot = calPhot[isMag]
+	# identify photometric frames
 	goodFrame = np.in1d(calPhot['frameIndex'],goodFrames)
-	# convert from raw counts to magnitudes
+	# convert from raw counts to magnitudes, mask low S/N measurements
 	calPhot['snr'] = np.ma.divide(calPhot['counts'],calPhot['countsErr'])
 	calPhot['counts'].mask[:] |= calPhot['snr'] <= 5.0
-	#
+	# apply the extinction correction to get raw internal mags
 	k = np.choose(calPhot['filter']=='g',[ k_ext['i'], k_ext['g'] ])
 	x = calPhot['airmass']
 	calPhot['rawMag'] = zp0 - 2.5*np.ma.log10(calPhot['counts']) - k*x
 	calPhot['magErr'] = 1.0856*np.ma.divide(calPhot['countsErr'],
 	                                        calPhot['counts'])
 	calPhot['magIvar'] = np.ma.power(calPhot['magErr'],-2)
-	#
-	ii = np.where(np.logical_and(isMag,goodFrame))[0]
-	phot = calPhot[ii].group_by(['objId','filter'])
-	phot,objPhot = clipped_mean_phot(phot,'rawMag','magIvar')
-	#
-	jj = np.where(np.logical_and(~objPhot['meanMag'].mask,
-	                             objPhot['nObs'] > instrCfg.zpMinNobs))[0]
-	ii = np.where(np.logical_and(isMag,
-	                     np.in1d(calPhot['objId'],objPhot['objId'][jj])))[0]
-	#
-	zpPhot = join_by_id(calPhot[ii],objPhot['objId','meanMag'][jj],'objId')
-	#
-	zpPhot['dMag'] = np.ma.subtract(zpPhot['rawMag'],zpPhot['meanMag'])
-	zpPhot['dMag'].mask[:] |= zpPhot['snr'] <= instrCfg.zpMinSnr
-	zpPhot = zpPhot.group_by(zpGroups.colnames)
-	zpPhot,framePhot = clipped_mean_phot(zpPhot,'dMag','magIvar')
-	# fill the zeropoint columns
-	frameList['aperZp'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
-	frameList['aperZpRms'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
-	frameList['aperZpNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
+	# now group by object and filter to get mean magnitudes across only
+	# the *photometric* frames
+	sePhot = calPhot.group_by(['objId','filter'])
+	sePhot['_rawMag'] = sePhot['rawMag'].copy()
+	sePhot['_rawMag'].mask[:] |= ~goodFrame
+	sePhot,coaddPhot = clipped_mean_phot(sePhot,'_rawMag','magIvar')
+	# calculate dm = mag_i - <mag>
+	ii = map_group_to_items(sePhot)
+	sePhot['dMag'] = np.ma.subtract(sePhot['rawMag'],coaddPhot['meanMag'][ii])
+	sePhot['dMag'].mask[:] |= sePhot['snr'] < instrCfg.zpMinSnr
+	sePhot['dMag'].mask[:] |= coaddPhot['nObs'][ii] < instrCfg.zpMinNobs
+	# now regroup by the zeropoint groups (image,[ccd|amp]) and determine
+	# the relative zeropoint from the average mean mag difference on each img
+	# this includes the non-photometric frames (goodFrame mask not used)
+	sePhot = sePhot.group_by(zpGroups.colnames)
+	sePhot,framePhot = clipped_mean_phot(sePhot,'dMag','magIvar')
+	# fill the zeropoint columns in the frame table
 	ii = match_by_id(framePhot,frameList,'frameIndex')
 	jj = zpGroups.groupindex(framePhot)
 	frameList['aperZp'][ii,jj] = zp0 - framePhot['meanMag'].filled(zp0)
@@ -352,11 +355,14 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	frameList['aperZpNstar'][ii,jj] = framePhot['nObs'].filled(0)
 	# summary statistics for each frame calculated by regrouping the
 	# object photometry and getting chi-sqr values summed over the frame
-	zpPhot['chiVal'] = zpPhot['dMag']*np.ma.sqrt(zpPhot['magIvar'])
-	zpPhot['chiSqr'] = np.ma.power(zpPhot['chiVal'],2)
-	zpPhot['chiSqr'].mask[:] |= np.ma.greater(np.ma.abs(zpPhot['chiVal']),
+	# first apply the relative zeropoints back to the mag differences
+	ii = map_group_to_items(sePhot)
+	sePhot['dMag'] += framePhot['meanMag'][ii]
+	sePhot['chiVal'] = sePhot['dMag']*np.ma.sqrt(sePhot['magIvar'])
+	sePhot['chiSqr'] = np.ma.power(sePhot['chiVal'],2)
+	sePhot['chiSqr'].mask[:] |= np.ma.greater(np.ma.abs(sePhot['chiVal']),
 	                                          instrCfg.zpMaxChiVal)
-	objsByFrame = zpPhot.group_by('frameIndex')
+	objsByFrame = sePhot.group_by('frameIndex')
 	objsByFrame['nStar'] = (~objsByFrame['chiSqr'].mask).astype(np.int32)
 	objsByFrame['_ntot'] = (~objsByFrame['chiVal'].mask).astype(np.float32)
 	frameStats = objsByFrame['nStar','chiSqr','_ntot'].groups.aggregate(
@@ -369,7 +375,7 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	                                   frameStats['nStar']-1)
 	del frameStats['_ntot']
 	frameStats = hstack([objsByFrame.groups.keys,frameStats])
-	#
+	# populate the frame table with the summary statistic columns
 	ii = match_by_id(frameStats,frameList,'frameIndex')
 	frameList['nStar'] = np.int32(0)
 	frameList['nStar'][ii] = frameStats['nStar'].filled(0)
@@ -377,7 +383,8 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 		frameList[c] = np.float32(0)
 		frameList[c][ii] = frameStats[c].filled(0)
 	#
-	return zpPhot,objPhot,frameList
+	del sePhot['_rawMag']
+	return sePhot,coaddPhot,frameList
 
 def add_photometric_flag(frameList,nIter=3,minContig=10,
                          maxTrendDev=0.05,maxRms=0.02):
@@ -485,7 +492,6 @@ def iter_selfcal(phot,frameList,refCat,instrCfg,**kwargs):
 		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp'][ii]==0)
 		zp = np.ma.subtract(zp, zp0[b] + kx)
 		zpts['aperZp'][ii] = zp.filled(0)
-	del sePhot['meanMag']
 	rv = namedtuple("zpdat",["sePhot","coaddPhot","zpts","zptrend"])
 	return rv(sePhot,coaddPhot,zpts,zptrend)
 
