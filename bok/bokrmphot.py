@@ -283,10 +283,10 @@ if __name__=='__main__':
 			frameList = Table.read(frameListFile)
 		bokPhot = load_raw_bok_aperphot(dataMap,photCat.name,
 		                                season=args.season)
-		phot = idmrmphot.calibrate_lightcurves(bokPhot,frameList,bokCfg)
+		bokPhot = idmrmphot.calibrate_lightcurves(bokPhot,frameList,bokCfg)
 		photFile = get_phot_file(photCat,args.lctable)
 		print 'writing lightcurve catalog {}'.format(photFile)
-		phot.write(photFile,overwrite=True)
+		bokPhot.write(photFile,overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
 		# XXX
