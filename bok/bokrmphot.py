@@ -247,6 +247,8 @@ if __name__=='__main__':
 	                help='index of aperture to select [-2]')
 	parser.add_argument('--outfile',type=str,default='',
 	                help='output file')
+	parser.add_argument('--photo',action='store_true',
+	                help='use only photometric frames')
 	parser.add_argument('--debug',action='store_true',
 	                help='add debugging output')
 	args = parser.parse_args()
@@ -301,6 +303,15 @@ if __name__=='__main__':
 			print 'loaded lightcurve catalog {}'.format(photFile)
 			bokPhot = Table.read(photFile)
 		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,lightcurve=True)
+		if args.photo:
+			if frameList is None:
+				print 'loading zeropoints table {0}'.format(frameListFile)
+				frameList = Table.read(frameListFile)
+			photoFrames = frameList['frameIndex'][frameList['isPhoto']]
+			nbefore = len(apPhot)
+			apPhot = apPhot[np.in1d(apPhot['frameIndex'],photoFrames)]
+			print 'restricting to {0} photo frames yields {1}/{2}'.format(
+			          len(photoFrames),nbefore,len(apPhot))
 		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,bokCfg)
 		outfile = args.outfile if args.outfile else 'phot_stats_bok.fits'
 		bs.write(outfile,overwrite=True)
