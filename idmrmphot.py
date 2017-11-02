@@ -15,6 +15,10 @@ from astropy.time import Time
 
 k_ext = {'g':0.17,'i':0.06}
 
+idmPhotFlags = {
+  'FRAME_MANY_OUTLIERS':(10,"frame containing object has many outliers"),
+}
+
 def get_season(mjd):
 	'''splits the seasons on Dec. 1 of previous year'''
 	seasons = np.arange(2000,2030)
@@ -315,8 +319,8 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	rawPhot = join_by_id(rawPhot,frameList[frFields],'frameIndex')
 	# match to reference catalog to select stars in desired magnitude range 
 	calPhot = join_by_id(rawPhot,refCat.refCat['objId','g','i'],'objId')
-	isG = in_range(calPhot['g'],instrCfg.magRange['g'])
-	isI = in_range(calPhot['i'],instrCfg.magRange['i'])
+	isG = in_range(calPhot['g'],instrCfg.zpMagRange['g'])
+	isI = in_range(calPhot['i'],instrCfg.zpMagRange['i'])
 	isMag = np.choose(calPhot['filter']=='g',[isI,isG])
 	calPhot = calPhot[isMag]
 	# identify photometric frames
@@ -572,8 +576,7 @@ def calc_apercorrs(rawPhot,frameList,instrCfg,mode='ccd',
 #
 ##############################################################################
 
-def extract_aperture(phot,aperNum,maskBits=None,
-                     badFrames=None,lightcurve=False):
+def extract_aperture(phot,aperNum,maskBits=None,lightcurve=False):
 	# aperture-independent columns
 	gCols = ['frameIndex','objId','ccdNum','nMasked','peakCounts']
 	if lightcurve:
@@ -589,25 +592,24 @@ def extract_aperture(phot,aperNum,maskBits=None,
 	if not maskBits:
 		maskBits = 2**32 - 1
 	mask = (aphot['flags'] & maskBits) > 0
-	if badFrames is not None:
-		mask[:] |= np.in1d(aphot['frameIndex'],badFrames)
 	for c in apCols:
 		aphot[c].mask[:] |= mask
 	return aphot
 
-def calibrate_lightcurves(phot,zpts,instrCfg,zpmode='ccd',apcmode='ccd'):
-	ii = match_by_id(phot,zpts,'frameIndex')
-	#
+def calibrate_lightcurves(phot,frameList,instrCfg,zpmode='ccd',apcmode='ccd'):
+	ii = match_by_id(phot,frameList,'frameIndex')
+	# get the zeropoints according to their grouping (frame,[ccd|amp])
 	zpGroups = get_frame_groups(zpmode,instrCfg)
 	jj = zpGroups.groupindex(phot)
-	zp = zpts['aperZp'][ii,jj][:,np.newaxis]
+	zp = frameList['aperZp'][ii,jj][:,np.newaxis]
 	zp = np.ma.array(zp,mask=(zp==0))
-	#
+	# get the aperture corrs according to their grouping (frame,[ccd|amp])
 	apGroups = get_frame_groups(apcmode,instrCfg)
 	jj = apGroups.groupindex(phot)
-	apCorr = zpts['aperCorr'][ii,jj]
+	apCorr = frameList['aperCorr'][ii,jj]
 	apCorr = np.ma.array(apCorr,mask=(apCorr==0))
-	#
+	# apply the zeropoints and aperture corrections to get calibrated
+	# fluxes and magnitudes
 	corrCps = phot['counts'] * apCorr 
 	poscounts = np.ma.array(corrCps,mask=phot['counts']<=0)
 	magAB = zp - 2.5*np.ma.log10(poscounts)
@@ -621,8 +623,13 @@ def calibrate_lightcurves(phot,zpts,instrCfg,zpmode='ccd',apcmode='ccd'):
 	fluxErr = phot['countsErr'] * apCorr * fluxConv
 	phot['aperFlux'] = flux.filled(0)
 	phot['aperFluxErr'] = fluxErr.filled(0)
-	#
-	obsdat = zpts['frameIndex','airmass','mjdMid','filter'].copy()
+	# add flags based on frame statistics
+	badFrame = np.where(frameList['outlierFrac'] > 
+	                      instrCfg.maxFrameOutlierFrac)[0]
+	ii = np.in1d(phot['frameIndex'],frameList['frameIndex'][badFrame])
+	phot['flags'][ii] |= 1 << idmPhotFlags['FRAME_MANY_OUTLIERS'][0]
+	# include some basic observing particulars useful for lightcurves
+	obsdat = frameList['frameIndex','airmass','mjdMid','filter'].copy()
 	obsdat.rename_column('mjdMid','mjd')
 	phot = join_by_id(phot,obsdat,'frameIndex')
 	return phot

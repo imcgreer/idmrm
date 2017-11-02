@@ -55,10 +55,11 @@ class BokConfig(object):
 	zpMinNobs = 10
 	zpMaxSeeing = 2.3/0.455
 	zpMaxChiVal = 5.
+	zpMagRange = {'g':(17.0,19.5),'i':(16.5,19.2)}
 	apCorrMaxRmsFrac = 0.5
 	apCorrMinSnr = 20.
 	apCorrMinNstar = 20
-	magRange = {'g':(17.0,19.5),'i':(16.5,19.2)}
+	maxFrameOutlierFrac = 0.02
 	colorxfun = Sdss2BokTransform()
 	def colorXform(self,mag,clr,filt):
 		return self.colorxfun(mag,clr,filt)
@@ -187,7 +188,7 @@ def bok_zeropoints(dataMap,frameList,refCat,bokCfg,debug=False):
 		frameList['season'] = idmrmphot.get_season(frameList['mjdStart'])
 	# select the 7" aperture
 	bokPhot = load_raw_bok_aperphot(dataMap,refCat.name)
-	bok7 = idmrmphot.extract_aperture(bokPhot,bokCfg.zpAperNum,badFrames=None)
+	bok7 = idmrmphot.extract_aperture(bokPhot,bokCfg.zpAperNum)
 	# calculate zeropoints and aperture corrections
 	zpdat = idmrmphot.iter_selfcal(bok7,frameList,refCat,bokCfg)
 	frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,bokCfg,mode='ccd')
@@ -299,11 +300,11 @@ if __name__=='__main__':
 			photFile = get_phot_file(photCat,args.lctable)
 			print 'loaded lightcurve catalog {}'.format(photFile)
 			bokPhot = Table.read(photFile)
-		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,badFrames=None,
-		                                    lightcurve=True)
+		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,lightcurve=True)
 		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,bokCfg)
 		outfile = args.outfile if args.outfile else 'phot_stats_bok.fits'
 		bs.write(outfile,overwrite=True)
+		timerLog('binned stats')
 	timerLog.dump()
 	if args.processes > 1:
 		pool.close()
