@@ -341,24 +341,25 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	zpPhot['dMag'].mask[:] |= zpPhot['snr'] <= instrCfg.zpMinSnr
 	zpPhot = zpPhot.group_by(zpGroups.colnames)
 	zpPhot,framePhot = clipped_mean_phot(zpPhot,'dMag','magIvar')
-	#
+	# fill the zeropoint columns
 	frameList['aperZp'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
 	frameList['aperZpRms'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
-	frameList['aperNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
+	frameList['aperZpNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
 	ii = match_by_id(framePhot,frameList,'frameIndex')
 	jj = zpGroups.groupindex(framePhot)
 	frameList['aperZp'][ii,jj] = zp0 - framePhot['meanMag'].filled(zp0)
 	frameList['aperZpRms'][ii,jj] = framePhot['rmsMag'].filled(0)
-	frameList['aperNstar'][ii,jj] = framePhot['nObs'].filled(0)
-	# summary statistics
+	frameList['aperZpNstar'][ii,jj] = framePhot['nObs'].filled(0)
+	# summary statistics for each frame calculated by regrouping the
+	# object photometry and getting chi-sqr values summed over the frame
 	zpPhot['chiVal'] = zpPhot['dMag']*np.ma.sqrt(zpPhot['magIvar'])
 	zpPhot['chiSqr'] = np.ma.power(zpPhot['chiVal'],2)
 	zpPhot['chiSqr'].mask[:] |= np.ma.greater(np.ma.abs(zpPhot['chiVal']),
 	                                          instrCfg.zpMaxChiVal)
-	objByFrames = zpPhot.group_by('frameIndex')
-	objByFrames['nStar'] = (~zpPhot['chiSqr'].mask).astype(np.int32)
-	objByFrames['_ntot'] = (~zpPhot['chiVal'].mask).astype(np.float32)
-	frameStats = objByFrames['nStar','chiSqr','_ntot'].groups.aggregate(
+	objsByFrame = zpPhot.group_by('frameIndex')
+	objsByFrame['nStar'] = (~objsByFrame['chiSqr'].mask).astype(np.int32)
+	objsByFrame['_ntot'] = (~objsByFrame['chiVal'].mask).astype(np.float32)
+	frameStats = objsByFrame['nStar','chiSqr','_ntot'].groups.aggregate(
 	                                                             np.ma.sum)
 	for c in frameStats.colnames:
 		frameStats[c].mask[:] |= frameStats['nStar'] == 0
@@ -367,7 +368,7 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	frameStats['rchi2'] = np.ma.divide(frameStats['chiSqr'],
 	                                   frameStats['nStar']-1)
 	del frameStats['_ntot']
-	frameStats = hstack([objByFrames.groups.keys,frameStats])
+	frameStats = hstack([objsByFrame.groups.keys,frameStats])
 	#
 	ii = match_by_id(frameStats,frameList,'frameIndex')
 	frameList['nStar'] = np.int32(0)

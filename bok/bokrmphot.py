@@ -246,6 +246,8 @@ if __name__=='__main__':
 	                help='index of aperture to select [-2]')
 	parser.add_argument('--outfile',type=str,default='',
 	                help='output file')
+	parser.add_argument('--debug',action='store_true',
+	                help='add debugging output')
 	args = parser.parse_args()
 	args = bokrmpipe.set_rm_defaults(args)
 	dataMap = bokpl.init_data_map(args)
@@ -271,7 +273,8 @@ if __name__=='__main__':
 	if args.zeropoint:
 		print 'loading zeropoints table {0}'.format(frameListFile)
 		frameList = Table.read(frameListFile)
-		frameList = bok_zeropoints(dataMap,frameList,photCat,bokCfg)
+		frameList = bok_zeropoints(dataMap,frameList,photCat,bokCfg,
+		                           debug=args.debug)
 		frameList.write(frameListFile,overwrite=True)
 		timerLog('zeropoints')
 	if args.lightcurves:
