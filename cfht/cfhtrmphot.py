@@ -20,6 +20,27 @@ nom_pixscl = 0.18555
 
 cfhtrm_aperRad = np.array([0.75,1.5,2.275,3.4,4.55,6.67,10.]) / nom_pixscl
 
+class CfhtConfig(object):
+	name = 'cfht'
+	nCCD = 40
+	nAper = 7
+	nAmp = 80
+	ccd0 = 0
+	zpAperNum = -2
+	zpMinSnr = 10.
+	zpMinNobs = 10
+	zpMaxSeeing = 1.7/nom_pixscl
+	zpMaxChiVal = 5.
+	zpMagRange = {'g':(17.0,20.5),'i':(17.0,21.0)}
+	zpFitKwargs = {'minContig':1}
+	apCorrMaxRmsFrac = 0.5
+	apCorrMinSnr = 20.
+	apCorrMinNstar = 20
+	maxFrameOutlierFrac = 0.02
+	#colorxfun = Sdss2BokTransform()
+	def colorXform(self,mag,clr,filt):
+		return mag + -0.0761*clr + 0.08775 # XXX a crude fit to g
+
 def _cat_worker(dataMap,imFile,**kwargs):
 	clobber = kwargs.pop('redo',False)
 	verbose = kwargs.pop('verbose',0)
@@ -100,14 +121,16 @@ def make_sextractor_catalogs(dataMap,procMap,**kwargs):
 	p_cat_worker = partial(_exc_cat_worker,dataMap,**kwargs)
 	status = procMap(p_cat_worker,files)
 
-def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
-	imFile,frame = inp
-	refCat = photCat.refCat
-	catPfx = photCat.name
+def get_phot_fn(dataMap,imFile,catPfx):
 	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
 	                         '.'.join(['',catPfx,'phot']))
 	catFile = dataMap('cat')(imFile)
-	aperFile = fmap(imFile)
+	return fmap(imFile)
+
+def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
+	imFile,frame = inp
+	refCat = photCat.refCat
+	aperFile = get_phot_fn(dataMap,imFile,photCat.name)
 	if verbose:
 		print '--> ',imFile
 	if os.path.exists(aperFile) and not redo:
@@ -151,42 +174,43 @@ def make_phot_catalogs(dataMap,procMap,photCat,**kwargs):
 	p_phot_worker = partial(_phot_worker,dataMap,photCat,**kwargs)
 	status = procMap(p_phot_worker,files)
 
-def _zp_worker(dataMap,photCat,instrCfg,inp):
-	imFile,filt = inp
-	catPfx = photCat.name
-	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
-	                         '.'.join(['',catPfx,'phot']))
-	try:
-		print imFile
-		imCat = idmrmphot.load_catalog(fmap(imFile),filt,
-		                               photCat.refCat,instrCfg,verbose=True)
-	except IOError:
-		return idmrmphot.generate_zptab_entry(instrCfg) # null entry
-	return idmrmphot.zeropoint_focalplane(imCat,instrCfg)
+def load_raw_cfht_aperphot(dataMap,photCat):
+	photTabs = []
+	for imFile in dataMap.getFiles():
+		aperFile = get_phot_fn(dataMap,imFile,photCat.name)
+		try:
+			photTabs.append(Table.read(aperFile))
+			print "loaded catalog {}".format(aperFile)
+		except IOError:
+			print "WARNING: catalog {} missing, skipped!".format(aperFile)
+	return vstack(photTabs)
 
-class cfhtCfg(object):
-	name = 'cfht'
-	nCCD = 40
-	nAper = 7
-	aperNum = -2
-	ccd0 = 0
-	minStar = 10
-	magRange = {'g':(17.0,20.5),'i':(17.0,21.0)}
-	def colorXform(self,mag,clr,band):
-		return mag + -0.0761*clr + 0.08775
-
-def calc_zeropoints(dataMap,procMap,photCat,zpFile):
-	files,frames = dataMap.getFiles(with_frames=True)
-#	if True:
-#		foo = np.where(dataMap.obsDb['frameIndex']==30)[0]
-#		files = files[foo]
-#		frames = frames[foo]
-	filt = dataMap.obsDb['filter'][frames]
-	p_zp_worker = partial(_zp_worker,dataMap,photCat,cfhtCfg())
-	zps = procMap(p_zp_worker,zip(files,filt))
-	zptab = vstack(zps)
-	zptab['frameIndex'] = dataMap.obsDb['frameIndex'][frames]
-	zptab.write(zpFile,overwrite=True)
+def calc_zeropoints(dataMap,refCat,cfhtCfg,debug=False):
+	#
+	fields = ['frameIndex','utDate','filter','mjdStart','mjdMid','airmass']
+	frameList = dataMap.obsDb[fields]
+	frameList.sort('frameIndex')
+	# zero point trends are fit over a season
+	if 'season' not in frameList.colnames:
+		frameList['season'] = idmrmphot.get_season(frameList['mjdStart'])
+	# select the zeropoint aperture
+	cfhtPhot = load_raw_cfht_aperphot(dataMap,refCat)
+	# XXX temporary hack
+	cfhtPhot['nMasked'] = np.int32(0)
+	cfhtPhot['peakCounts'] = np.float32(1)
+	phot = idmrmphot.extract_aperture(cfhtPhot,cfhtCfg.zpAperNum)
+	# calculate zeropoints and aperture corrections
+	zpdat = idmrmphot.iter_selfcal(phot,frameList,refCat,cfhtCfg,
+	                               mode='focalplane')
+	frameList = idmrmphot.calc_apercorrs(cfhtPhot,frameList,cfhtCfg,
+	                                     mode='focalplane')
+	#
+	if True:
+		zpdat.zptrend.write('cfht_zptrend.dat',overwrite=True,format='ascii')
+	if debug:
+		zpdat.sePhot.write('zp_sephot.fits',overwrite=True)
+		zpdat.coaddPhot.write('zp_coaddphot.fits',overwrite=True)
+	return frameList
 
 def calibrate_lightcurves(dataMap,photCat,zpFile):
 	zpTab = Table.read(zpFile)
@@ -313,11 +337,10 @@ if __name__=='__main__':
 	else:
 		procMap = map
 	dataMap = cfhtrm.CfhtDataMap()
-	photCat = bokrmphot.load_target_catalog(args.catalog,args.catdir,
-	                                        args.lctable)
-	photCat.load_ref_catalog()
+	photCat = idmrmphot.load_target_catalog(args.catalog)
 	timerLog = bokutil.TimerLog()
 	kwargs = dict(redo=args.redo,verbose=args.verbose)
+	cfhtCfg = CfhtConfig()
 	if args.utdate:
 		utDate = args.utdate.split(',')
 		dataMap.setUtDate(utDate)
@@ -328,7 +351,8 @@ if __name__=='__main__':
 		make_phot_catalogs(dataMap,procMap,photCat,**kwargs)
 		timerLog('photometry catalogs')
 	if args.zeropoint:
-		calc_zeropoints(dataMap,procMap,photCat,args.zptable)
+		zps = calc_zeropoints(dataMap,photCat,cfhtCfg,debug=True)
+		zps.write(args.zptable,overwrite=True)
 		timerLog('zeropoints')
 	if args.lightcurves:
 		calibrate_lightcurves(dataMap,photCat,args.zptable)

@@ -291,7 +291,7 @@ def get_frame_groups(mode,instrCfg):
 
 # XXX break this up into steps
 
-def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
+def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd',initzps=True):
 	''' mode is 'focalplane','ccd','amp' '''
 	frameList.sort('frameIndex')
 	zp0 = np.float32(25)
@@ -309,9 +309,10 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd'):
 	except KeyError:
 		isSee = True
 	# initialize the zeropoint columns
-	frameList['aperZp'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
-	frameList['aperZpRms'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
-	frameList['aperZpNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
+	if initzps:
+		frameList['aperZp'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
+		frameList['aperZpRms'] = np.zeros((1,zpGroups.ngroup),dtype=np.float32)
+		frameList['aperZpNstar'] = np.zeros((1,zpGroups.ngroup),dtype=np.int32)
 	#
 	goodFrames = frameList['frameIndex'][np.logical_and(isPhoto,isSee)]
 	# match to frame database to get observing particulars
@@ -412,11 +413,15 @@ def add_photometric_flag(frameList,nIter=3,minContig=10,
 		# and set the starting point to be day 0 of the season
 		day0 = Time(season+'-01-01T00:00:00',format='isot',scale='utc')
 		dMjd = sdat['mjdStart'] - day0.mjd
-		# guess that the "true" zeropoint is around the 90th percentile
+		# not enough data to determine a mean zeropoint
+		if np.sum(~sdat['_meanzp'].mask) < 5:
+			sdat['_meanzp'].mask[:] = True
+			continue
+		# guess that the "true" zeropoint is around the 75th percentile
 		# of the measured zeropoints
-		zp90 = np.percentile(sdat['_meanzp'].compressed(),90)
+		zpGuess = np.percentile(sdat['_meanzp'].compressed(),75)
 		# and mask obviously non-photometric data
-		msk = np.ma.greater(zp90 - sdat['_meanzp'], 0.25)
+		msk = np.ma.greater(zpGuess - sdat['_meanzp'], 0.25)
 		# then iteratively fit a line to the zeropoints allow variation 
 		# with time, rejecting low outliers at each iteration
 		for iterNum in range(nIter):
@@ -424,20 +429,21 @@ def add_photometric_flag(frameList,nIter=3,minContig=10,
 			resid = np.polyval(zpFit,dMjd/100) - sdat['_meanzp']
 			msk |= np.ma.greater(resid,maxTrendDev)
 		# now search for continguous images within 10% of fitted zeropoint
-		ncontig = np.zeros(len(msk),dtype=int)
-		for utd in np.unique(sdat['utDate']):
-			jj = np.where(sdat['utDate']==utd)[0]
-			if not np.any(msk[jj]):
-				# the whole night was photometric
-				ncontig[jj] = len(jj)
-				continue
-			i1 = 0
-			for i2 in np.where(msk[jj])[0]:
-				ncontig[jj[i1:i2]] = i2 - i1
-				i1 = i2 + 1
-			ncontig[jj[i1:]] = len(jj) - i1
-		cmsk = (ncontig < minContig) & ~msk
-		msk |= ncontig < minContig
+		if minContig > 1:
+			ncontig = np.zeros(len(msk),dtype=int)
+			for utd in np.unique(sdat['utDate']):
+				jj = np.where(sdat['utDate']==utd)[0]
+				if not np.any(msk[jj]):
+					# the whole night was photometric
+					ncontig[jj] = len(jj)
+					continue
+				i1 = 0
+				for i2 in np.where(msk[jj])[0]:
+					ncontig[jj[i1:i2]] = i2 - i1
+					i1 = i2 + 1
+				ncontig[jj[i1:]] = len(jj) - i1
+			cmsk = (ncontig < minContig) & ~msk
+			msk |= ncontig < minContig
 		print '%s %s %d/%d photometric' % (season,filt,np.sum(~msk),len(msk))
 		sdat['isPhoto'][:] &= np.logical_not(msk.filled())
 		zpTrend.add_row( (season,filt,day0.mjd,zpFit[1],zpFit[0]) )
@@ -464,6 +470,8 @@ def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 	zpoff = {}
 	for b in 'gi':
 		bphot = phot2ref[phot2ref['filter']==b]
+		if len(bphot)==0:
+			continue
 		mags = colorXform(bphot[b],
 		                  bphot['g']-bphot['i'],
 		                  bphot['filter'])
@@ -483,15 +491,17 @@ def iter_selfcal(phot,frameList,refCat,instrCfg,**kwargs):
 	for iterNum in range(nIter):
 		sePhot,coaddPhot,zpts = selfcal(phot,zpts,refCat,instrCfg,**kwargs)
 		#
-		isPhoto,zptrend = add_photometric_flag(zpts)
+		isPhoto,zptrend = add_photometric_flag(zpts,**instrCfg.zpFitKwargs)
 		zpts['isPhoto'] = isPhoto
-	# get the zeropoint offset to SDSS to put Bok photometry on SDSS system
+	# get the zeropoint offset to SDSS to put photometry on SDSS system
 	ii = np.where( (coaddPhot['nObs'] > minNobs) &
 	               (coaddPhot['rmsMag'] < maxRms) )[0] 
 	zp0 = _get_sdss_offsets(coaddPhot[ii],refCat.refCat,instrCfg.colorXform)
 	# back out the extinction correction
 	for b in 'gi':
 		ii = np.where(zpts['filter']==b)[0]
+		if len(ii)==0:
+			continue
 		kx = k_ext[b]*zpts['airmass'][ii][:,np.newaxis]
 		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp'][ii]==0)
 		zp = np.ma.subtract(zp, zp0[b] + kx)
