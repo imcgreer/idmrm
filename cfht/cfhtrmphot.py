@@ -20,6 +20,12 @@ nom_pixscl = 0.18555
 
 cfhtrm_aperRad = np.array([0.75,1.5,2.275,3.4,4.55,6.67,10.]) / nom_pixscl
 
+def get_phot_file(photCat,inFile):
+	if inFile is None:
+		return '{0}_{1}.fits'.format('cfhtrmphot',photCat.name)
+	else:
+		return inFile
+
 class CfhtConfig(object):
 	name = 'cfht'
 	nCCD = 40
@@ -212,7 +218,7 @@ def calc_zeropoints(dataMap,refCat,cfhtCfg,debug=False):
 		zpdat.coaddPhot.write('zp_coaddphot.fits',overwrite=True)
 	return frameList
 
-def calibrate_lightcurves(dataMap,photCat,zpFile):
+def calibrate_lightcurves(dataMap,photCat,zpFile,cfhtCfg):
 	zpTab = Table.read(zpFile)
 	if False:
 		# these are hacks to fill the zeropoints table for CCDs with no
@@ -227,21 +233,11 @@ def calibrate_lightcurves(dataMap,photCat,zpFile):
 				iszero = row['aperCorr'][:,j] == 0
 				if np.sum(~iszero) > 5:
 					row['aperCorr'][iszero,j] = np.median(row['aperCorr'][~iszero,j])
-	outFile = 'cfhtrm_%s.fits' % photCat.name
-	catPfx = photCat.name
-	fmap = SimpleFileNameMap(None,cfhtrm.cfhtCatDir,
-	                         '.'.join(['',catPfx,'phot']))
-	files_and_frames = dataMap.getFiles(with_frames=True)
-	t = []
-	for f,frameIdx in zip(*files_and_frames):
-		try:
-			tab = Table.read(fmap(f))
-			tab['filter'] = dataMap.obsDb['filter'][frameIdx]
-			t.append(tab)
-		except IOError:
-			pass
-	photTab = vstack(t)
-	idmrmphot.calibrate_lightcurves(photTab,zpTab,dataMap,outFile)
+	phot = load_raw_cfht_aperphot(dataMap,photCat)
+	phot = idmrmphot.calibrate_lightcurves(phot,zpTab,cfhtCfg,
+	                                       zpmode='focalplane',
+	                                       apcmode='focalplane')
+	return phot
 
 def check_status(dataMap):
 	from collections import defaultdict
@@ -311,6 +307,8 @@ if __name__=='__main__':
 	                help='construct lightcurves')
 	parser.add_argument('--aggregate',action='store_true',
 	                help='construct aggregate photometry')
+	parser.add_argument('--binnedstats',action='store_true',
+	                help='compute phot stats in mag bins')
 	parser.add_argument('--status',action='store_true',
 	                help='check processing status')
 	parser.add_argument('--catalog',type=str,default='sdssrm',
@@ -323,8 +321,14 @@ if __name__=='__main__':
 	                help='UT date(s) to process [default=all]')
 	parser.add_argument('--lctable',type=str,
 	                help='lightcurve table')
+	parser.add_argument('--aper',type=int,default=-2,
+	                help='index of aperture to select [-2]')
 	parser.add_argument('--zptable',type=str,default='cfhtrm_zeropoints.fits',
 	                help='zeropoints table')
+	parser.add_argument('--outfile',type=str,default='',
+	                help='output file')
+	parser.add_argument('--photo',action='store_true',
+	                help='use only photometric frames')
 	parser.add_argument('--catdir',type=str,
 	                help='directory containing photometry catalogs')
 	parser.add_argument('-v','--verbose',action='count',
@@ -341,6 +345,7 @@ if __name__=='__main__':
 	timerLog = bokutil.TimerLog()
 	kwargs = dict(redo=args.redo,verbose=args.verbose)
 	cfhtCfg = CfhtConfig()
+	phot = None
 	if args.utdate:
 		utDate = args.utdate.split(',')
 		dataMap.setUtDate(utDate)
@@ -355,7 +360,9 @@ if __name__=='__main__':
 		zps.write(args.zptable,overwrite=True)
 		timerLog('zeropoints')
 	if args.lightcurves:
-		calibrate_lightcurves(dataMap,photCat,args.zptable)
+		phot = calibrate_lightcurves(dataMap,photCat,args.zptable,cfhtCfg)
+		photFile = get_phot_file(photCat,args.lctable)
+		phot.write('lcs.fits',overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
 		photCat.load_bok_phot(nogroup=True)
@@ -363,6 +370,32 @@ if __name__=='__main__':
 		which = 'all'
 		bokrmphot.aggregate_phot(photCat,which,aperNum=-2)#,**kwargs)
 		timerLog('aggregate phot')
+	if args.binnedstats:
+		if phot is None:
+			photFile = get_phot_file(photCat,args.lctable)
+			print 'loaded lightcurve catalog {}'.format(photFile)
+			phot = Table.read(photFile)
+		apPhot = idmrmphot.extract_aperture(phot,args.aper,
+		                                    maskBits=(2**8-1),
+		                                    lightcurve=True)
+		if args.photo:
+			if frameList is None:
+				print 'loading zeropoints table {0}'.format(frameListFile)
+				frameList = Table.read(frameListFile)
+			photoFrames = frameList['frameIndex'][frameList['isPhoto']]
+			nbefore = len(apPhot)
+			apPhot = apPhot[np.in1d(apPhot['frameIndex'],photoFrames)]
+			print 'restricting to {0} photo frames yields {1}/{2}'.format(
+			          len(photoFrames),nbefore,len(apPhot))
+		if True:
+			# there's too little 2009 data for useful statistics
+			apPhot['season'] = idmrmphot.get_season(apPhot['mjd'])
+			apPhot = apPhot[apPhot['season']!='2009']
+		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,cfhtCfg,
+		                                binEdges=np.arange(17.5,20.11,0.2))
+		outfile = args.outfile if args.outfile else 'phot_stats_cfht.fits'
+		bs.write(outfile,overwrite=True)
+		timerLog('binned stats')
 	if args.status:
 		check_status(dataMap)
 	timerLog.dump()

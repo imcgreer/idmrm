@@ -130,8 +130,8 @@ class CfhtDataMap(object):
 		self._utDate = utDate
 	def getFiles(self,filt=None,utDate=None,with_frames=False):
 		s = self.obsDb['good'].copy()
-		f = np.char.add(np.char.add(self.obsDb['utDir'][s],'/'),
-		                self.obsDb['fileName'][s])
+		f = np.char.add(np.char.add(self.obsDb['utDir'],'/'),
+		                self.obsDb['fileName'])
 		if filt is not None:
 			s &= np.in1d(self.obsDb['filter'],filt)
 		if utDate is None:
@@ -140,10 +140,7 @@ class CfhtDataMap(object):
 			utdlist = list(set([ utd for pfx in utDate 
 			                           for utd in self.allUtDates 
 			                             if utd.startswith(pfx) ]))
-			isUtd = np.zeros_like(s)
-			for utd in utdlist:
-				isUtd |= ( self.obsDb['utDate'] == utd )
-			s &= isUtd
+			s &= np.in1d(self.obsDb['utDate'],utdlist)
 		frames = np.where(s)[0]
 		if with_frames:
 			return f[frames],frames
