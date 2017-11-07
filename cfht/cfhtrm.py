@@ -86,6 +86,12 @@ def update_obs_db():
 	ii = np.where((t['utDate']=='YYYYMMDD')&(t['expNum']<1e6))[0]
 	for i,fn in zip(ii,t['fileName'][ii]):
 		set_obs_db_item(t,i,os.path.join(cfhtImgDir,fn+'.fits.fz'))
+	# No stars in the RM field match to these pointings
+	outsideField = np.logical_or(t['targetRa']<210.2,
+	                np.logical_or(t['targetRa']>217.3,
+	                 np.logical_or(t['targetDec']<51,
+	                               t['targetDec']>55.3)))
+	t['good'][outsideField] = False
 	t.write(os.path.join('.','config','sdssrm-cfht.fits.gz'),
 	        overwrite=True)
 
@@ -148,7 +154,7 @@ class CfhtDataMap(object):
 
 if __name__=='__main__':
 	#make_obs_db()
-	dm = CfhtDataMap()
-	move_files_to_subdirs(dm.obsDb)
-	#update_obs_db()
+	#dm = CfhtDataMap()
+	#move_files_to_subdirs(dm.obsDb)
+	update_obs_db()
 
