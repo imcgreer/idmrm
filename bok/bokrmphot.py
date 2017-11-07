@@ -292,10 +292,19 @@ if __name__=='__main__':
 		bokPhot.write(photFile,overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
-		# XXX
-		which = 'nightly' if args.nightly else 'all'
-		aggregate_phot(photCat,which,
-		               catDir=args.catdir,outName=args.outfile)
+#		which = 'nightly' if args.nightly else 'all'
+		if bokPhot is None:
+			photFile = get_phot_file(photCat,args.lctable)
+			print 'loaded lightcurve catalog {}'.format(photFile)
+			bokPhot = Table.read(photFile)
+		apPhot = idmrmphot.extract_aperture(bokPhot,args.aper,lightcurve=True)
+		apPhot['season'] = idmrmphot.get_season(apPhot['mjd'])
+		apPhot = apPhot.group_by(['season','filter','objId'])
+		objPhot = idmrmphot.clipped_group_mean_rms(apPhot['aperMag',])
+		aggPhot = hstack([apPhot.groups.keys,objPhot])
+		outfile = args.outfile if args.outfile \
+		                   else 'meanphot_bok_{}.fits'.format(args.season)
+		aggPhot.write(outfile)
 		timerLog('aggregate phot')
 	if args.binnedstats:
 		if bokPhot is None:

@@ -293,6 +293,31 @@ def check_status(dataMap):
 			logfile.write(f+'\n')
 		logfile.close()
 
+def load_phot(phot,photCat,frameList,lctable,aper,season=None,photo=False):
+	if phot is None:
+		photFile = get_phot_file(photCat,args.lctable)
+		print 'loaded lightcurve catalog {}'.format(photFile)
+		phot = Table.read(photFile)
+	apPhot = idmrmphot.extract_aperture(phot,args.aper,
+	                                    maskBits=(2**8-1),
+	                                    lightcurve=True)
+	if args.photo:
+		if frameList is None:
+			print 'loading zeropoints table {0}'.format(frameListFile)
+			frameList = Table.read(frameListFile)
+		photoFrames = frameList['frameIndex'][frameList['isPhoto']]
+		nbefore = len(apPhot)
+		apPhot = apPhot[np.in1d(apPhot['frameIndex'],photoFrames)]
+		print 'restricting to {0} photo frames yields {1}/{2}'.format(
+		          len(photoFrames),nbefore,len(apPhot))
+	apPhot['season'] = idmrmphot.get_season(apPhot['mjd'])
+	if season is None:
+		# there's too little 2009 data for useful statistics
+		apPhot = apPhot[apPhot['season']!='2009']
+	else:
+		apPhot = apPhot[apPhot['season']==season]
+	return apPhot
+
 if __name__=='__main__':
 	import sys
 	import argparse
@@ -321,6 +346,8 @@ if __name__=='__main__':
 	                help='UT date(s) to process [default=all]')
 	parser.add_argument('--lctable',type=str,
 	                help='lightcurve table')
+	parser.add_argument('--season',type=str,
+	                help='observing season')
 	parser.add_argument('--aper',type=int,default=-2,
 	                help='index of aperture to select [-2]')
 	parser.add_argument('--zptable',type=str,default='cfhtrm_zeropoints.fits',
@@ -365,32 +392,19 @@ if __name__=='__main__':
 		phot.write(photFile,overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
-		photCat.load_bok_phot(nogroup=True)
 #		which = 'nightly' if args.nightly else 'all'
-		which = 'all'
-		bokrmphot.aggregate_phot(photCat,which,aperNum=-2)#,**kwargs)
+		frameList = Table.read(args.zptable)
+		apPhot = load_phot(phot,photCat,frameList,
+		                   args.lctable,args.aper,args.season)
+		apPhot = apPhot.group_by(['season','filter','objId'])
+		objPhot = idmrmphot.clipped_group_mean_rms(apPhot['aperMag',])
+		aggPhot = hstack([apPhot.groups.keys,objPhot])
+		outfile = args.outfile if args.outfile \
+		                   else 'meanphot_cfht_{}.fits'.format(args.season)
+		aggPhot.write(outfile)
 		timerLog('aggregate phot')
 	if args.binnedstats:
-		if phot is None:
-			photFile = get_phot_file(photCat,args.lctable)
-			print 'loaded lightcurve catalog {}'.format(photFile)
-			phot = Table.read(photFile)
-		apPhot = idmrmphot.extract_aperture(phot,args.aper,
-		                                    maskBits=(2**8-1),
-		                                    lightcurve=True)
-		if args.photo:
-			if frameList is None:
-				print 'loading zeropoints table {0}'.format(frameListFile)
-				frameList = Table.read(frameListFile)
-			photoFrames = frameList['frameIndex'][frameList['isPhoto']]
-			nbefore = len(apPhot)
-			apPhot = apPhot[np.in1d(apPhot['frameIndex'],photoFrames)]
-			print 'restricting to {0} photo frames yields {1}/{2}'.format(
-			          len(photoFrames),nbefore,len(apPhot))
-		if True:
-			# there's too little 2009 data for useful statistics
-			apPhot['season'] = idmrmphot.get_season(apPhot['mjd'])
-			apPhot = apPhot[apPhot['season']!='2009']
+		apPhot = load_phot(phot,photCat,frameList,args.lctable,args.aper)
 		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,cfhtCfg,
 		                                binEdges=np.arange(17.5,20.11,0.2))
 		outfile = args.outfile if args.outfile else 'phot_stats_cfht.fits'
