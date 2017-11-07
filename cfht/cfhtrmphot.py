@@ -362,7 +362,7 @@ if __name__=='__main__':
 	if args.lightcurves:
 		phot = calibrate_lightcurves(dataMap,photCat,args.zptable,cfhtCfg)
 		photFile = get_phot_file(photCat,args.lctable)
-		phot.write('lcs.fits',overwrite=True)
+		phot.write(photFile,overwrite=True)
 		timerLog('lightcurves')
 	if args.aggregate:
 		photCat.load_bok_phot(nogroup=True)
