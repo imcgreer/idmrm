@@ -291,7 +291,8 @@ def get_frame_groups(mode,instrCfg):
 
 # XXX break this up into steps
 
-def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd',initzps=True):
+def selfcal(rawPhot,frameList,refCat,instrCfg,
+            flatField=None,mode='ccd',initzps=True):
 	''' mode is 'focalplane','ccd','amp' '''
 	frameList.sort('frameIndex')
 	zp0 = np.float32(25)
@@ -329,10 +330,16 @@ def selfcal(rawPhot,frameList,refCat,instrCfg,mode='ccd',initzps=True):
 	# convert from raw counts to magnitudes, mask low S/N measurements
 	calPhot['snr'] = np.ma.divide(calPhot['counts'],calPhot['countsErr'])
 	calPhot['counts'].mask[:] |= calPhot['snr'] <= 5.0
-	# apply the extinction correction to get raw internal mags
+	# apply the extinction and flatfield corrections to get raw internal mags
 	k = np.choose(calPhot['filter']=='g',[ k_ext['i'], k_ext['g'] ])
 	x = calPhot['airmass']
-	calPhot['rawMag'] = zp0 - 2.5*np.ma.log10(calPhot['counts']) - k*x
+	if flatField is None:
+		ff = 0.
+	else:
+		ff = flatField(calPhot['filter'],calPhot['mjdStart'],
+		               calPhot['ccdNum'],calPhot['x'],calPhot['y'])
+	rawMag = -2.5*np.ma.log10(calPhot['counts'])
+	calPhot['rawMag'] = zp0 + (rawMag - k*x + ff)
 	calPhot['magErr'] = 1.0856*np.ma.divide(calPhot['countsErr'],
 	                                        calPhot['counts'])
 	calPhot['magIvar'] = np.ma.power(calPhot['magErr'],-2)
@@ -446,7 +453,7 @@ def add_photometric_flag(frameList,nIter=3,minContig=10,
 			msk |= ncontig < minContig
 		print '%s %s %d/%d photometric' % (season,filt,np.sum(~msk),len(msk))
 		sdat['isPhoto'][:] &= np.logical_not(msk.filled())
-		zpTrend.add_row( (season,filt,day0.mjd,zpFit[1],zpFit[0]) )
+		zpTrend.add_row( (season,filt,day0.mjd,zpFit[0],zpFit[1]) )
 	# now reject nights with too much variation in the zeropoint
 	zpTab['_meanzp_p'] = zpTab['_meanzp'].copy()
 	zpTab['_meanzp_p'].mask |= ~zpTab['isPhoto']
@@ -464,6 +471,43 @@ def add_photometric_flag(frameList,nIter=3,minContig=10,
 		zpTab.groups[night]['isPhoto'] = False
 	isPhoto = zpTab['isPhoto'][mjd_ii.argsort()].filled()
 	return isPhoto,zpTrend
+
+class FlatField(object):
+	def __init__(self,zpTrend=None):
+		self.zpTrend = None
+		self.imgMjds = {'g':[],'i':[]}
+		self.images = {'g':[],'i':[]}
+		if zpTrend:
+			self.setPedestal(zpTrend)
+	def setPedestal(self,zpTrend):
+		self.zpTrend = zpTrend.copy()
+		self.zpTrend['_dmag0'] = 0.0
+		for b in 'gi':
+			ii = np.where(self.zpTrend['filter']==b)[0]
+			if len(ii)==0:
+				continue
+			dmag0 = self.zpTrend['zpt0'][ii] - self.zpTrend['zpt0'][ii].max()
+			self.zpTrend['_dmag0'][ii] = dmag0
+	def getPedestal(self,filt,mjd):
+		epoch = np.zeros(len(mjd),dtype=np.int32)
+		for b in 'gi':
+			ii = np.where(filt==b)[0]
+			if len(ii)==0:
+				continue
+			jj = np.where(self.zpTrend['filter']==b)[0]
+			j = np.searchsorted(self.zpTrend['mjd0'][jj],mjd) - 1
+			epoch[ii] = jj[j]
+		dMjd = mjd - self.zpTrend['mjd0'][epoch]
+		zpslope = self.zpTrend['dzpdt'][epoch]*dMjd/100
+		return self.zpTrend['_dmag0'][epoch] + zpslope
+	def addImage(self,mjd,filt,img):
+		self.imgMjds[filt].append(mjd)
+		self.images[filt].append(img)
+	def __call__(self,filt,mjd,ccdNum,x,y):
+		ff = 0.
+		if self.zpTrend:
+			ff += self.getPedestal(filt,mjd)
+		return ff
 
 def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 	phot2ref = join_by_id(coaddPhot,refCat,'objId')
@@ -488,26 +532,32 @@ def iter_selfcal(phot,frameList,refCat,instrCfg,**kwargs):
 	# this routine updates the frameList with zeropoint data
 	frameList['isPhoto'] = True
 	zpts = frameList
+	flatField = None
 	for iterNum in range(nIter):
-		sePhot,coaddPhot,zpts = selfcal(phot,zpts,refCat,instrCfg,**kwargs)
-		#
-		isPhoto,zptrend = add_photometric_flag(zpts,**instrCfg.zpFitKwargs)
-		zpts['isPhoto'] = isPhoto
+		sePhot,coaddPhot,zpts = selfcal(phot,zpts,refCat,instrCfg,
+		                                flatField=flatField,**kwargs)
+		if iterNum < nIter-1:
+			isPhoto,zpTrend = add_photometric_flag(zpts,
+			                                       **instrCfg.zpFitKwargs)
+			zpts['isPhoto'] = isPhoto
+			flatField = FlatField(zpTrend)
 	# get the zeropoint offset to SDSS to put photometry on SDSS system
 	ii = np.where( (coaddPhot['nObs'] > minNobs) &
 	               (coaddPhot['rmsMag'] < maxRms) )[0] 
 	zp0 = _get_sdss_offsets(coaddPhot[ii],refCat.refCat,instrCfg.colorXform)
-	# back out the extinction correction
+	# back out the extinction and flatfield corrections
 	for b in 'gi':
 		ii = np.where(zpts['filter']==b)[0]
 		if len(ii)==0:
 			continue
 		kx = k_ext[b]*zpts['airmass'][ii][:,np.newaxis]
+		ff = flatField.getPedestal(zpts['filter'][ii],
+		                           zpts['mjdStart'][ii])[:,np.newaxis]
 		zp = np.ma.array(zpts['aperZp'][ii],mask=zpts['aperZp'][ii]==0)
-		zp = np.ma.subtract(zp, zp0[b] + kx)
+		zp = zp - zp0[b] - kx + ff
 		zpts['aperZp'][ii] = zp.filled(0)
 	rv = namedtuple("zpdat",["sePhot","coaddPhot","zpts","zptrend"])
-	return rv(sePhot,coaddPhot,zpts,zptrend)
+	return rv(sePhot,coaddPhot,zpts,zpTrend)
 
 
 ##############################################################################
@@ -550,7 +600,6 @@ def calc_apercorrs(rawPhot,frameList,instrCfg,mode='ccd',
 	jj = apGroups.groupindex(phot.groups.keys)
 	def _restack_arr(a,sfx):
 		return np.dstack([a[k+sfx].filled(0) for k in apNames]).squeeze()
-#	import pdb; pdb.set_trace()
 	frameList['aperCorr'][ii,jj] = _restack_arr(gStat,'')
 	frameList['aperCorrRms'][ii,jj] = _restack_arr(gStat,'_rms')
 	frameList['aperCorrNstar'][ii,jj] = _restack_arr(gStat,'_n')
@@ -588,7 +637,9 @@ def calc_apercorrs(rawPhot,frameList,instrCfg,mode='ccd',
 
 def extract_aperture(phot,aperNum,maskBits=None,lightcurve=False):
 	# aperture-independent columns
-	gCols = ['frameIndex','objId','ccdNum','nMasked','peakCounts']
+	gCols = ['frameIndex','objId','ccdNum','x','y']
+	if 'peakCounts' in phot.colnames: # XXX
+		gCols += ['nMasked','peakCounts']
 	if lightcurve:
 		gCols += ['airmass','mjd','filter']
 	aphot = Table(phot[gCols].copy(),masked=True)
@@ -611,7 +662,10 @@ def calibrate_lightcurves(phot,frameList,instrCfg,zpmode='ccd',apcmode='ccd'):
 	# get the zeropoints according to their grouping (frame,[ccd|amp])
 	zpGroups = get_frame_groups(zpmode,instrCfg)
 	jj = zpGroups.groupindex(phot)
-	zp = frameList['aperZp'][ii,jj][:,np.newaxis]
+	if frameList['aperZp'].ndim==1: # XXX hack
+		zp = frameList['aperZp'][ii][:,np.newaxis]
+	else:
+		zp = frameList['aperZp'][ii,jj][:,np.newaxis]
 	zp = np.ma.array(zp,mask=(zp==0))
 	# get the aperture corrs according to their grouping (frame,[ccd|amp])
 	apGroups = get_frame_groups(apcmode,instrCfg)
@@ -652,7 +706,8 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
 	mbins = binEdges[:-1] + np.diff(binEdges)/2
 	nbins = len(mbins)
 	#
-	apPhot['season'] = get_season(apPhot['mjd'])
+	if 'season' not in apPhot.colnames:
+		apPhot['season'] = get_season(apPhot['mjd'])
 	#
 	print '[{0:5d}] initial photometry table'.format(len(apPhot))
 	#
@@ -668,38 +723,42 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
 	apPhot = apPhot[jj]
 	apPhot['refMag'] = refMag[jj]
 	apPhot['dMagExt'] = apPhot['aperMag'] - apPhot['refMag']
-	#
 	# calc mean mags, internal calibration mag differences
 	print '...calculate internal mean magnitudes'
 	apPhot = apPhot.group_by(['season','filter','objId'])
 	objPhot = clipped_group_mean_rms(apPhot['aperMag','dMagExt'])
 	objPhot = hstack([apPhot.groups.keys,objPhot])
-	#
+	# associate each object with a magnitude bin
 	print '...bin by reference mag'
 	objPhot['refMag'] = apPhot['refMag'][apPhot.groups.indices[:-1]]
 	binNum = np.digitize(objPhot['refMag'],binEdges)
 	objPhot['binNum'] = binNum - 1
 	assert np.all((objPhot['binNum']>=0)&(objPhot['binNum']<len(mbins)))
-	#
+	# regroup into magnitude bins
 	objPhot = objPhot[objPhot['aperMag_n']>=minNobs]
-	#
 	binPhot = objPhot.group_by(['season','filter','binNum'])
 	binGroup = Table(binPhot.groups.keys)
+	# average magnitude offsets
+	meanVals = binPhot['dMagExt',].groups.aggregate(np.ma.median)
+	binGroup['dMagExt'] = meanVals['dMagExt']
+	# percentile distributions of per-object scatter in mag bins
 	perc = lambda x,p: np.percentile(x.compressed(),p)
 	rmskeys = ['aperMag_rms','dMagExt_rms']
 	for p in pctiles:
 		pc = binPhot[rmskeys].groups.aggregate(lambda x: perc(x,p))
 		binGroup['sig%d'%(p)] = pc['aperMag_rms']
 		binGroup['sigExt%d'%(p)] = pc['dMagExt_rms']
-	#
+	# fill the bin statistics into a multidimensional array
 	binGroup = binGroup.group_by(['season','filter'])
 	binStats = Table(binGroup.groups.keys)
+	binStats['dMagExt'] = np.zeros((1,len(mbins)),dtype=np.float32)
 	for p in pctiles:
 		binStats['sig%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
 		binStats['sigExt%d'%p] = np.zeros((1,len(mbins)),dtype=np.float32)
 	for i in range(len(binStats)):
+		jj = binGroup.groups[i]['binNum']
+		binStats['dMagExt'][i,jj] = binGroup.groups[i]['dMagExt']
 		for p in pctiles:
-			jj = binGroup.groups[i]['binNum']
 			binStats['sig%d'%p][i,jj] = binGroup.groups[i]['sig%d'%p]
 			binStats['sigExt%d'%p][i,jj] = binGroup.groups[i]['sigExt%d'%p]
 	binStats.meta['mbins'] = ','.join(['%.2f'%m for m in mbins])
