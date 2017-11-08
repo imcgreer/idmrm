@@ -299,9 +299,7 @@ def load_phot(phot,photCat,frameList,lctable,aper,season=None,photo=False):
 		photFile = get_phot_file(photCat,args.lctable)
 		print 'loaded lightcurve catalog {}'.format(photFile)
 		phot = Table.read(photFile)
-	apPhot = idmrmphot.extract_aperture(phot,args.aper,
-	                                    maskBits=(2**8-1),
-	                                    lightcurve=True)
+	apPhot = idmrmphot.extract_aperture(phot,args.aper,lightcurve=True)
 	if args.photo:
 		if frameList is None:
 			print 'loading zeropoints table {0}'.format(frameListFile)

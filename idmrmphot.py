@@ -17,7 +17,7 @@ k_ext = {'g':0.17,'i':0.06}
 
 idmPhotFlags = {
   'FRAME_MANY_OUTLIERS':(10,"frame containing object has many outliers"),
-     'FRAME_LARGE_CHI2':(11,"frame containing object has large chi-sqr"),
+   'FRAME_LARGE_CHISQR':(11,"frame containing object has large chi-sqr"),
 }
 
 def get_season(mjd):
