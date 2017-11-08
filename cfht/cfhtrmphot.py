@@ -42,8 +42,9 @@ class CfhtConfig(object):
 	apCorrMaxRmsFrac = 0.5
 	apCorrMinSnr = 20.
 	apCorrMinNstar = 20
-	maxFrameOutlierFrac = 0.02
-	#colorxfun = Sdss2BokTransform()
+	# XXX need to understand why cfht data has so many outliers
+	maxFrameOutlierFrac = 0.99
+	maxFrameChiSqrNu = 10.
 	def colorXform(self,mag,clr,filt):
 		return mag + -0.0761*clr + 0.08775 # XXX a crude fit to g
 

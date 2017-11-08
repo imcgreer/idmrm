@@ -17,6 +17,7 @@ k_ext = {'g':0.17,'i':0.06}
 
 idmPhotFlags = {
   'FRAME_MANY_OUTLIERS':(10,"frame containing object has many outliers"),
+     'FRAME_LARGE_CHI2':(11,"frame containing object has large chi-sqr"),
 }
 
 def get_season(mjd):
@@ -688,10 +689,20 @@ def calibrate_lightcurves(phot,frameList,instrCfg,zpmode='ccd',apcmode='ccd'):
 	phot['aperFlux'] = flux.filled(0)
 	phot['aperFluxErr'] = fluxErr.filled(0)
 	# add flags based on frame statistics
-	badFrame = np.where(frameList['outlierFrac'] > 
-	                      instrCfg.maxFrameOutlierFrac)[0]
-	ii = np.in1d(phot['frameIndex'],frameList['frameIndex'][badFrame])
-	phot['flags'][ii] |= 1 << idmPhotFlags['FRAME_MANY_OUTLIERS'][0]
+	try:
+		badFrame = np.where(frameList['outlierFrac'] > 
+		                      instrCfg.maxFrameOutlierFrac)[0]
+		ii = np.in1d(phot['frameIndex'],frameList['frameIndex'][badFrame])
+		phot['flags'][ii] |= 1 << idmPhotFlags['FRAME_MANY_OUTLIERS'][0]
+	except AttributeError:
+		pass
+	try:
+		badFrame = np.where(frameList['rchi2'] > 
+		                      instrCfg.maxFrameChiSqrNu)[0]
+		ii = np.in1d(phot['frameIndex'],frameList['frameIndex'][badFrame])
+		phot['flags'][ii] |= 1 << idmPhotFlags['FRAME_LARGE_CHISQR'][0]
+	except AttributeError:
+		pass
 	# include some basic observing particulars useful for lightcurves
 	obsdat = frameList['frameIndex','airmass','mjdMid','filter'].copy()
 	obsdat.rename_column('mjdMid','mjd')
