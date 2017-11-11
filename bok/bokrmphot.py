@@ -24,26 +24,6 @@ def get_phot_file(photCat,inFile):
 	else:
 		return inFile
 
-class Sdss2BokTransform(object):
-	colorMin = 0.4
-	colorMax = 3.0
-	def __init__(self,clearZero=False):
-		_cfgdir = os.path.join(os.environ['BOKRMDIR'],'config') # XXX
-		self.cterms = {}
-		for b in 'gi':
-			self.cterms[b] = np.loadtxt(os.path.join(_cfgdir,
-			                                   'bok2sdss_%s_gicoeff.dat'%b))
-			if clearZero:
-				self.cterms[b][-1] = 0
-	def __call__(self,mags,colors,filt):
-		corrMags = mags.copy()
-		for b in 'gi':
-			ii = np.where(filt==b)[0]
-			corrMags[ii] += np.polyval(self.cterms[b],colors[ii])
-		corrMags = np.ma.array(corrMags,
-		                  mask=(colors<self.colorMin)|(colors>self.colorMax))
-		return corrMags
-
 class BokConfig(object):
 	name = 'bok'
 	nCcd = 4
@@ -56,13 +36,12 @@ class BokConfig(object):
 	zpMaxSeeing = 2.3/0.455
 	zpMaxChiVal = 5.
 	zpMagRange = {'g':(17.0,19.5),'i':(16.5,19.2)}
+	zpFitKwargs = {}
 	apCorrMaxRmsFrac = 0.5
 	apCorrMinSnr = 20.
 	apCorrMinNstar = 20
 	maxFrameOutlierFrac = 0.02
-	colorxfun = Sdss2BokTransform()
-	def colorXform(self,mag,clr,filt):
-		return self.colorxfun(mag,clr,filt)
+	colorXform = idmrmphot.ColorTransform('bok','sdss')
 
 
 ##############################################################################
@@ -177,7 +156,8 @@ def load_raw_bok_aperphot(dataMap,targetName,season=None,old=False):
 #dataMap = bokrmpipe.quick_load_datamap()
 #refCat = idmrmphot.CleanSdssStarCatalog()
 
-def bok_zeropoints(dataMap,frameList,refCat,bokCfg,debug=False):
+def bok_zeropoints(dataMap,frameList,refCat,bokCfg,
+                   noapercorr=False,debug=False):
 	frameList.sort('frameIndex')
 	#
 	fields = ['frameIndex','utDate','filter','mjdStart','mjdMid','airmass']
@@ -191,7 +171,9 @@ def bok_zeropoints(dataMap,frameList,refCat,bokCfg,debug=False):
 	bok7 = idmrmphot.extract_aperture(bokPhot,bokCfg.zpAperNum)
 	# calculate zeropoints and aperture corrections
 	zpdat = idmrmphot.iter_selfcal(bok7,frameList,refCat,bokCfg)
-	frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,bokCfg,mode='ccd')
+	if not noapercorr:
+		frameList = idmrmphot.calc_apercorrs(bokPhot,frameList,bokCfg,
+		                                     mode='ccd')
 	#
 	if True:
 		zpdat.zptrend.write('zptrend.dat',overwrite=True,format='ascii')
@@ -249,6 +231,8 @@ if __name__=='__main__':
 	                help='output file')
 	parser.add_argument('--photo',action='store_true',
 	                help='use only photometric frames')
+	parser.add_argument('--noapercorr',action='store_true',
+	                help='skip the aperture correction calculation')
 	parser.add_argument('--debug',action='store_true',
 	                help='add debugging output')
 	args = parser.parse_args()
@@ -277,6 +261,7 @@ if __name__=='__main__':
 		print 'loading zeropoints table {0}'.format(frameListFile)
 		frameList = Table.read(frameListFile)
 		frameList = bok_zeropoints(dataMap,frameList,photCat,bokCfg,
+		                           noapercorr=args.noapercorr,
 		                           debug=args.debug)
 		frameList.write(frameListFile,overwrite=True)
 		timerLog('zeropoints')

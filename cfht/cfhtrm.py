@@ -128,6 +128,8 @@ class CfhtDataMap(object):
 		self._utDate = None
 	def setUtDate(self,utDate):
 		self._utDate = utDate
+	def getFilters(self):
+		return 'g'
 	def getFiles(self,filt=None,utDate=None,with_frames=False):
 		s = self.obsDb['good'].copy()
 		f = np.char.add(np.char.add(self.obsDb['utDir'],'/'),

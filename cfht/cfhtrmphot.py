@@ -45,8 +45,7 @@ class CfhtConfig(object):
 	# XXX need to understand why cfht data has so many outliers
 	maxFrameOutlierFrac = 0.99
 	maxFrameChiSqrNu = 10.
-	def colorXform(self,mag,clr,filt):
-		return mag + -0.0761*clr + 0.08775 # XXX a crude fit to g
+	colorXform = idmrmphot.ColorTransform('cfht','sdss')
 
 def _cat_worker(dataMap,imFile,**kwargs):
 	clobber = kwargs.pop('redo',False)
@@ -207,13 +206,25 @@ def calc_zeropoints(dataMap,refCat,cfhtCfg,debug=False):
 	cfhtPhot['peakCounts'] = np.float32(1)
 	phot = idmrmphot.extract_aperture(cfhtPhot,cfhtCfg.zpAperNum)
 	# calculate zeropoints and aperture corrections
-	zpdat = idmrmphot.iter_selfcal(phot,frameList,refCat,cfhtCfg,
-	                               mode='focalplane')
+	# XXX I guess would have to split i band out eventually? it won't have
+	#     same epochs
+	epochs = cfhtCfg.colorXform.get_epoch('g',frameList['mjdStart'])
+	outputs = []
+	for epoch in np.unique(epochs):
+		ii = np.where(epochs==epoch)[0]
+		jj = np.where(np.in1d(phot['frameIndex'],
+		                      frameList['frameIndex'][ii]))[0]
+		zpdat = idmrmphot.iter_selfcal(phot[jj],frameList[ii],refCat,cfhtCfg,
+		                               mode='focalplane')
+		outputs.append(zpdat)
+	frameList = vstack([ zpdat.zpts for zpdat in outputs ])
+	frameList.sort('frameIndex')
 	frameList = idmrmphot.calc_apercorrs(cfhtPhot,frameList,cfhtCfg,
 	                                     mode='focalplane')
 	#
 	if True:
-		zpdat.zptrend.write('cfht_zptrend.dat',overwrite=True,format='ascii')
+		zptrend = vstack([ zpdat.zptrend for zpdat in outputs ])
+		zptrend.write('cfht_zptrend.dat',overwrite=True,format='ascii')
 	if debug:
 		zpdat.sePhot.write('zp_sephot.fits',overwrite=True)
 		zpdat.coaddPhot.write('zp_coaddphot.fits',overwrite=True)
@@ -403,6 +414,7 @@ if __name__=='__main__':
 		aggPhot.write(outfile)
 		timerLog('aggregate phot')
 	if args.binnedstats:
+		frameList = Table.read(args.zptable)
 		apPhot = load_phot(phot,photCat,frameList,args.lctable,args.aper)
 		bs = idmrmphot.get_binned_stats(apPhot,photCat.refCat,cfhtCfg,
 		                                binEdges=np.arange(17.5,20.11,0.2))

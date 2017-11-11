@@ -223,6 +223,38 @@ def load_target_catalog(target):
 	}
 	return targets[target]()
 
+class ColorTransform(object):
+	colorMin = 0.3
+	colorMax = 2.8
+	def __init__(self,photsys,refsys,clearZero=False):
+		_cfgdir = os.path.join(os.environ['BOKRMDIR'],'..') # XXX
+		self.data = Table.read(os.path.join(_cfgdir,'colorterms.fits'))
+		self.photSys = photsys
+		self.refSys = refsys
+		ii = np.where( (self.data['photsys']==photsys) &
+		               (self.data['refsys']==refsys) )[0]
+		self.data = self.data[ii]
+		if clearZero:
+			self.data['cterms'][:,-1] = 0
+	def get_epoch(self,filt,mjd):
+		jj = np.where(self.data['filter']==filt)[0]
+		return np.digitize(mjd,self.data['mjdmax'][jj])
+	def __call__(self,mags,colors,filt,mjd,masked=True):
+		corrMags = mags.copy()
+		for b in np.unique(filt):
+			epochs = self.get_epoch(b,mjd)
+			for epoch in np.unique(epochs):
+				ii = np.where((filt==b) & (epoch==epochs))[0]
+				j = np.where( (self.data['filter']==b) &
+				              (self.data['epoch']==epoch) )[0][0]
+				corrMags[ii] += np.polyval(self.data['cterms'][j],
+				                           colors[ii])
+		if masked:
+			corrMags = np.ma.array(corrMags,
+			                       mask=(colors<self.colorMin) |
+			                            (colors>self.colorMax))
+		return corrMags
+
 
 ##############################################################################
 #
@@ -496,9 +528,13 @@ class FlatField(object):
 			if len(ii)==0:
 				continue
 			jj = np.where(self.zpTrend['filter']==b)[0]
-			j = np.searchsorted(self.zpTrend['mjd0'][jj],mjd) - 1
+			j = np.searchsorted(self.zpTrend['mjd0'][jj],mjd[ii]) - 1
+			j[j<0] = 0 # in case some come before first mjd0
 			epoch[ii] = jj[j]
 		dMjd = mjd - self.zpTrend['mjd0'][epoch]
+		# the zpfit trends only apply to a single season 
+		#    (which may start in Dec)
+		assert np.all( (dMjd >= -30) & (dMjd < 330) )
 		zpslope = self.zpTrend['dzpdt'][epoch]*dMjd/100
 		return self.zpTrend['_dmag0'][epoch] + zpslope
 	def addImage(self,mjd,filt,img):
@@ -510,8 +546,11 @@ class FlatField(object):
 			ff += self.getPedestal(filt,mjd)
 		return ff
 
-def _get_sdss_offsets(coaddPhot,refCat,colorXform):
+def _get_sdss_offsets(coaddPhot,refCat,colorXform,meanMjd):
 	phot2ref = join_by_id(coaddPhot,refCat,'objId')
+	# this assumes the color transformation at the mean epoch can be
+	# applied to all the data
+	phot2ref['mjd'] = meanMjd
 	zpoff = {}
 	for b in 'gi':
 		bphot = phot2ref[phot2ref['filter']==b]
@@ -519,11 +558,12 @@ def _get_sdss_offsets(coaddPhot,refCat,colorXform):
 			continue
 		mags = colorXform(bphot[b],
 		                  bphot['g']-bphot['i'],
-		                  bphot['filter'])
+		                  bphot['filter'],bphot['mjd'])
 		dmag = bphot['meanMag'] - mags
 		dmag = sigma_clip(dmag,sigma=2.0)
 		zpoff[b] = dmag.mean()
-		print '{0}: {1:5.2f} +/- {2:4.2f}'.format(b,dmag.mean(),dmag.std())
+		print '{0}[{3:.1f}]: {1:5.2f} +/- {2:4.2f}'.format(b,
+		                                     dmag.mean(),dmag.std(),meanMjd)
 	return zpoff
 
 def iter_selfcal(phot,frameList,refCat,instrCfg,**kwargs):
@@ -545,7 +585,8 @@ def iter_selfcal(phot,frameList,refCat,instrCfg,**kwargs):
 	# get the zeropoint offset to SDSS to put photometry on SDSS system
 	ii = np.where( (coaddPhot['nObs'] > minNobs) &
 	               (coaddPhot['rmsMag'] < maxRms) )[0] 
-	zp0 = _get_sdss_offsets(coaddPhot[ii],refCat.refCat,instrCfg.colorXform)
+	zp0 = _get_sdss_offsets(coaddPhot[ii],refCat.refCat,instrCfg.colorXform,
+	                        zpts['mjdStart'].mean())
 	# back out the extinction and flatfield corrections
 	for b in 'gi':
 		ii = np.where(zpts['filter']==b)[0]
@@ -728,7 +769,8 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
 	refMag = np.choose(apPhot['filter']=='g',
 	                   [refCat['i'][ii],refCat['g'][ii]])
 	refClr = refCat['g'][ii] - refCat['i'][ii]
-	refMag = instrCfg.colorXform(refMag,refClr,apPhot['filter'])
+	refMag = instrCfg.colorXform(refMag,refClr,
+	                             apPhot['filter'],apPhot['mjd'])
 	jj = np.where(np.logical_and(refMag>binEdges[0],refMag<binEdges[-1]))[0]
 	print '[{0:5d}] select within reference mag range'.format(len(jj))
 	apPhot = apPhot[jj]
