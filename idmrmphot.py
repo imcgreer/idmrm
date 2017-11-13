@@ -226,9 +226,12 @@ def load_target_catalog(target):
 class ColorTransform(object):
 	colorMin = 0.3
 	colorMax = 2.8
-	def __init__(self,photsys,refsys,clearZero=False):
-		_cfgdir = os.path.join(os.environ['BOKRMDIR'],'..') # XXX
-		self.data = Table.read(os.path.join(_cfgdir,'colorterms.fits'))
+	def __init__(self,photsys,refsys,clearZero=False,inTab=None):
+		if inTab is None:
+			_cfgdir = os.path.join(os.environ['BOKRMDIR'],'..') # XXX
+			self.data = Table.read(os.path.join(_cfgdir,'colorterms.fits'))
+		else:
+			self.data = inTab
 		self.photSys = photsys
 		self.refSys = refsys
 		ii = np.where( (self.data['photsys']==photsys) &

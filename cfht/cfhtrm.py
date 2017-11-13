@@ -126,6 +126,9 @@ class CfhtDataMap(object):
 		self.fmap['img'] = SimpleFileNameMap(cfhtImgDir,cfhtCatDir,
 		                                     fromRaw=True)
 		self._utDate = None
+		if True:
+			# temporarily mark missing data as bad
+			self.obsDb['good'][self.obsDb['utDate']=='YYYYMMDD'] = False
 	def setUtDate(self,utDate):
 		self._utDate = utDate
 	def getFilters(self):

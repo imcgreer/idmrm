@@ -45,7 +45,26 @@ class CfhtConfig(object):
 	# XXX need to understand why cfht data has so many outliers
 	maxFrameOutlierFrac = 0.99
 	maxFrameChiSqrNu = 10.
-	colorXform = idmrmphot.ColorTransform('cfht','sdss')
+	#colorXform = idmrmphot.ColorTransform('cfht','sdss')
+	# although the color terms appear consistent between <2009 and 2014-15,
+	# combining them into a single calibration results in ~10 mmag offsets
+	# in the absolute calibration with SDSS. Splitting them into separate
+	# calibrations improves this.
+	def __init__(self):
+		_cfgdir = os.path.join(os.environ['BOKRMDIR'],'..') # XXX
+		ctab = Table.read(os.path.join(_cfgdir,'colorterms.fits'))
+		ii = np.where( (ctab['photsys']=='cfht') &
+		               (ctab['refsys']=='sdss') &
+		               (ctab['filter']=='g') )[0]
+		dec1_2013 = 56627
+		i = np.searchsorted(ctab['mjdmin'][ii],dec1_2013)
+		ctab['mjdmax'][ii[i-1]] = dec1_2013
+		ctab['epoch'][ii[i:]] += 1
+		ctab.insert_row(ii[i],('cfht','sdss','g',1,
+		                       dec1_2013,ctab['mjdmin'][ii[i]],
+		                       ctab['cterms'][ii[i-1]]))
+		self.colorXform = idmrmphot.ColorTransform('cfht','sdss',
+		                                           inTab=ctab)
 
 def _cat_worker(dataMap,imFile,**kwargs):
 	clobber = kwargs.pop('redo',False)
@@ -194,7 +213,8 @@ def load_raw_cfht_aperphot(dataMap,photCat):
 def calc_zeropoints(dataMap,refCat,cfhtCfg,debug=False):
 	#
 	fields = ['frameIndex','utDate','filter','mjdStart','mjdMid','airmass']
-	frameList = dataMap.obsDb[fields]
+	good = dataMap.obsDb['good']
+	frameList = dataMap.obsDb[fields][good]
 	frameList.sort('frameIndex')
 	# zero point trends are fit over a season
 	if 'season' not in frameList.colnames:
