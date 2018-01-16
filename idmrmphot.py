@@ -820,3 +820,23 @@ def get_binned_stats(apPhot,refCat,instrCfg,binEdges=None,minNobs=10,
 	binStats.meta['mbins'] = ','.join(['%.2f'%m for m in mbins])
 	return binStats
 
+def make_flat_field(phot,refCat,nbin=1024,apNum=-2):
+	# refMag from mean phot
+	ii = match_by_id(phot,refCat,'objId')
+	refMag = np.choose(phot['filter']=='g',
+	                   [refCat['i'][ii],refCat['g'][ii]])
+	phot['dmag'] = phot['aperMag'][:,apNum] - refMag
+	ii = np.where( (refMag>17) & (refMag<19.5) )[0]
+	phot = phot[ii]
+	snr = phot['counts'][:,apNum] / phot['countsErr'][:,apNum]
+	phot = phot[snr>10]
+	phot['xi'] = (phot['x'] // nbin).astype(np.int32)
+	phot['yi'] = (phot['y'] // nbin).astype(np.int32)
+	ccdPhot = phot.group_by(['filter','ccdNum','xi','yi'])
+	binPhot = ccdPhot['dmag',].groups.aggregate(np.median)
+	binPhot = hstack([ccdPhot.groups.keys,binPhot])
+	im = np.zeros((40,phot['yi'].max()+1,phot['xi'].max()+1)) # XXX
+	ccd = binPhot['ccdNum']
+	im[ccd,binPhot['yi'],binPhot['xi']] = binPhot['dmag']
+	return binPhot,im
+
