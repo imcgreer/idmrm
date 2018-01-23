@@ -13,6 +13,9 @@ from astropy.stats import sigma_clip
 from astropy.wcs import InconsistentAxisTypesError
 from astropy.time import Time
 
+sdssRmDataDir = os.path.join(os.environ['SDSSRMDATADIR'],'rm_data_files')
+bokRmDataDir = os.path.join(os.environ['BOKRMDIR'],'data')
+
 k_ext = {'g':0.17,'i':0.06}
 
 idmPhotFlags = {
@@ -120,15 +123,24 @@ def clipped_group_mean_rms(tabGroup,iters=2,sigma=3.0,nmedian=1):
 				pass
 	return group_mean_rms(tabGroup,names=origNames)
 
+
+def srcor(ra1,dec1,ra2,dec2,rad,return_sep=True):
+	from astropy.coordinates import SkyCoord,match_coordinates_sky
+	from astropy import units as u
+	c1 = SkyCoord(ra1,dec1,unit=(u.degree,u.degree))
+	c2 = SkyCoord(ra2,dec2,unit=(u.degree,u.degree))
+	idx,d2d,d3c = match_coordinates_sky(c1,c2)
+	ii = np.where(d2d.arcsec < rad)[0]
+	if return_sep:
+		return ii,idx[ii],d2d.arcsec[ii]
+	else:
+		return ii,idx[ii]
+
 ##############################################################################
 #
 # target catalogs 
 #
 ##############################################################################
-
-# XXX make this one directory
-sdssRmDataDir = os.path.join(os.environ['SDSSRMDIR'],'data')
-bokRmDataDir = os.path.join(os.environ['BOKRMDIR'],'data')
 
 class RmTargetCatalog(object):
 	def __init__(self):
@@ -215,7 +227,7 @@ class CfhtStarCatalog(RmTargetCatalog):
 def load_target_catalog(target):
 	targets = {
 	  'sdssrm':RmQsoCatalog,
-	  'allqsos':AllQsoCatalog,
+	  'allqso':AllQsoCatalog,
 	  'sdssall':SdssStarCatalog,
 	  'sdss':CleanSdssStarCatalog,
 	  'sdssold':SdssStarCatalogOld,

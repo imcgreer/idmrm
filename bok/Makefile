@@ -152,6 +152,10 @@ redo:
 aperphot_rm:
 	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS)
 
+# Generate aperture photometry catalogs for all quasars in RM field
+aperphot_allqso:
+	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS) --catalog allqso
+
 # Generate aperture photometry catalogs for SDSS reference stars
 aperphot_sdss:
 	$(BOKRMPHOT) $(INITARGS) --aperphot $(XARGS) --catalog sdss
@@ -168,6 +172,10 @@ zeropoints_sdss:
 # Generate lightcurve tables for RM targets
 lightcurves_rm:
 	$(BOKRMPHOT) $(INITARGS) --lightcurves $(XARGS)
+
+# Generate lightcurve tables for all quasars in RM field
+lightcurves_allqso:
+	$(BOKRMPHOT) $(INITARGS) --lightcurves $(XARGS) --catalog allqso
 
 # Generate lightcurve tables for SDSS reference stars
 lightcurves_sdss:

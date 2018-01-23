@@ -19,8 +19,14 @@ lightcurves_sdss:
 phot_rm:
 	$(CFHTRMPHOT) --dophot --catalog sdssrm $(XARGS)
 
+phot_allqso:
+	$(CFHTRMPHOT) --dophot --catalog allqso $(XARGS)
+
 lightcurves_rm:
 	$(CFHTRMPHOT) --lightcurves --catalog sdssrm $(XARGS)
+
+lightcurves_allqso:
+	$(CFHTRMPHOT) --lightcurves --catalog allqso $(XARGS)
 
 aggregate:
 	$(CFHTRMPHOT) --aggregate --catalog sdss

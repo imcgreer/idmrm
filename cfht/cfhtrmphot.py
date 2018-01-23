@@ -155,6 +155,7 @@ def get_phot_fn(dataMap,imFile,catPfx):
 def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 	imFile,frame = inp
 	refCat = photCat.refCat
+	catFile = dataMap('cat')(imFile)
 	aperFile = get_phot_fn(dataMap,imFile,photCat.name)
 	if verbose:
 		print '--> ',imFile
@@ -163,12 +164,12 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 	tabs = []
 	try:
 		f = fits.open(catFile)
-	except:
+	except IOError:
 		print catFile,' not found!'
 		return
 	for ccdNum,hdu in enumerate(f[1:]):
 		c = hdu.data
-		m1,m2,sep = bokrmphot.srcor(refCat['ra'],refCat['dec'],
+		m1,m2,sep = idmrmphot.srcor(refCat['ra'],refCat['dec'],
 		                            c['ALPHA_J2000'],c['DELTA_J2000'],matchRad)
 		if len(m1)==0:
 			continue
@@ -188,6 +189,7 @@ def _phot_worker(dataMap,photCat,inp,matchRad=2.0,redo=False,verbose=0):
 		t['__nmatch'] = len(m1)
 		t['__sep'] = sep
 		tabs.append(t)
+	f.close()
 	if len(tabs)==0:
 		if verbose:
 			print 'no objects!'
@@ -380,7 +382,8 @@ if __name__=='__main__':
 	                help='observing season')
 	parser.add_argument('--aper',type=int,default=-2,
 	                help='index of aperture to select [-2]')
-	parser.add_argument('--zptable',type=str,default='cfhtrm_zeropoints.fits',
+	parser.add_argument('--zptable',type=str,
+	                default='config/CFHTRMFrameList.fits.gz',
 	                help='zeropoints table')
 	parser.add_argument('--outfile',type=str,default='',
 	                help='output file')

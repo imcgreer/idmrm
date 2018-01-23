@@ -12,8 +12,9 @@ ifndef PROCARGS
 	PROCARGS := --nousepixflat --rampcorr --noweightmap 
 endif
 
-INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            $(MPARGS) $(VERBOSE)
+DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS)
+
+INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 
 # XXX switch fringe to "per-run"
 

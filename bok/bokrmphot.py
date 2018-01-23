@@ -73,12 +73,13 @@ def aper_worker(dataMap,inputType,aperRad,refCat,catDir,catPfx,
 	for f,frame in zip(files,frames):
 		imageFile = dataMap(inputType)(f)
 		aHeadFile = imageFile.replace('.fits','.ahead')
+		imageFile = bokutil.fits_name(imageFile)
 		fileNum = np.where(gainDat['files']==os.path.basename(f))[0][0]
 		gains = gainDat['gainCor'][fileNum]
 		gains = np.product(gains.squeeze(),axis=1) 
 		gains *= np.array(bokproc.nominal_gain)
 		skyAdu = gainDat['skys'][fileNum]
-		expTime = fits.getheader(imageFile,0)['EXPTIME']
+		expTime = dataMap.obsDb['expTime'][frame]
 		varIm = bokpl.make_variance_image(dataMap,f,bpMask,
 		                                  expTime,gains,skyAdu)
 		bokutil.mplog('aperture photometering '+f)

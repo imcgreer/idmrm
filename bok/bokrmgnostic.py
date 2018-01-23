@@ -279,7 +279,7 @@ def check_img_astrom(imgFile,refCat,catFile=None,mlim=19.5,band='g'):
 		if len(ii) < 10:
 			rv.append(None)
 			continue
-		m1,m2,sep = bokrmphot.srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
+		m1,m2,sep = idmrmphot.srcor(ccdCat['ALPHA_J2000'],ccdCat['DELTA_J2000'],
 		                            refCat['ra'][ii],refCat['dec'][ii],5.0)
 		rv.append(dict(N=len(ii),nMatch=len(ii),
 		               ra=ccdCat['ALPHA_J2000'][m1],

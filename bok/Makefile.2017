@@ -10,8 +10,9 @@ ifndef PROCARGS
 	PROCARGS := --nousepixflat --fixsaturation --nobiascorr --noweightmap
 endif
 
-INITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS) \
-            $(MPARGS) $(VERBOSE)
+DATAINITARGS := $(LOGARGS) $(DATAARGS) $(UTARGS) $(BANDARGS)
+
+INITARGS := $(DATAINITARGS) $(MPARGS) $(VERBOSE)
 
 export SKYFLATARGS := --masterskyflat
 
